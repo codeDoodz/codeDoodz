@@ -348,16 +348,34 @@
       const xOfSeat = (q) => lerp(G.slotX[0], G.slotX[2], q / 2);
       const arc = G.small ? 26 : 38;
 
-      // ---- the sentence as written
-      const sA = 'dog bites man', sB = 'man bites dog';
+      // ---- the sentence as written: its words trade places like the tokens below
+      // (dog arcs over, man ducks under), so the two sentences never overprint
       const fs = G.small ? 21 : 29;
-      const mixT = AM.math.smoothstep(0.35, 0.65, u);
-      [[sA, 1 - mixT, 'not news'], [sB, mixT, 'news']].forEach(([txt, a, gloss]) => {
-        if (a < 0.01) return;
-        DR.text(g, txt, w / 2, G.sentY + 8, { size: fs, role: 'display', italic: true, weight: 400, align: 'center', alpha: a });
-        const tw = DR.measure(g, txt, fs, 'display', 400);
-        DR.text(g, gloss, w / 2 + tw / 2 + 10, G.sentY + 4, { size: 9, role: 'mono', color: AM.col.mist, alpha: a * 0.9, letterSpacing: '0.08em' });
+      g.save(); g.font = AM.font(fs, 'display', 400, true);
+      const wW = WORDS.map((wd) => g.measureText(wd).width), spW = g.measureText(' ').width * 1.4; // italic overhang eats into a plain space
+      g.restore();
+      const wordLeft = (order) => {
+        const bySeat = [0, 1, 2].map((q) => order.indexOf(q));
+        const total = wW[0] + wW[1] + wW[2] + 2 * spW;
+        const left = new Array(3);
+        let x = w / 2 - total / 2;
+        bySeat.forEach((wi) => { left[wi] = x; x += wW[wi] + spW; });
+        return { left, right: w / 2 + total / 2 };
+      };
+      const LA = wordLeft(ORDER_A), LB = wordLeft(ORDER_B);
+      const lift = Math.sin(Math.PI * u);
+      WORDS.forEach((wd, wi) => {
+        let y = G.sentY + 8, al = 1;
+        if (wi === 0) y -= lift * fs * 0.55;
+        if (wi === 1) al = 1 - 0.4 * lift;
+        if (wi === 2) { y += lift * fs * 0.5; al = 1 - 0.6 * lift; }
+        DR.text(g, wd, lerp(LA.left[wi], LB.left[wi], u), y, { size: fs, role: 'display', italic: true, weight: 400, alpha: al });
       });
+      // the gloss fades out, then the other one fades in (never both at once)
+      const gx = Math.max(LA.right, LB.right) + 10;
+      const gA = 1 - AM.math.smoothstep(0.15, 0.42, u), gB = AM.math.smoothstep(0.58, 0.85, u);
+      if (gA > 0.01) DR.text(g, 'not news', gx, G.sentY + 4, { size: 9, role: 'mono', color: AM.col.mist, alpha: gA * 0.9, letterSpacing: '0.08em' });
+      if (gB > 0.01) DR.text(g, 'news', gx, G.sentY + 4, { size: 9, role: 'mono', color: AM.col.mist, alpha: gB * 0.9, letterSpacing: '0.08em' });
 
       // ---- seats (positions) with their clock stamps
       for (let q = 0; q < 3; q++) {
@@ -410,10 +428,10 @@
       // ---- tokens: positions along the row (dog arcs over, man ducks under)
       const tok = WORDS.map((_, wi) => {
         const x = xOfSeat(seats[wi]);
-        const lift = Math.sin(Math.PI * u);
         let y = G.tokY, sc = 1, al = 1;
-        if (wi === 0) y -= lift * arc;
-        if (wi === 2) { y += lift * arc * 0.3; sc = 1 - 0.18 * lift; al = 1 - 0.45 * lift; }
+        if (wi === 0) { y -= lift * arc * 1.3; sc = 1 - 0.1 * lift; }
+        if (wi === 1) al = 1 - 0.3 * lift;
+        if (wi === 2) { y += lift * arc * 0.35; sc = 1 - 0.25 * lift; al = 1 - 0.55 * lift; }
         return { x, y, sc, al };
       });
 
@@ -496,7 +514,7 @@
       const d3 = (arr) => WORDS.map((wd, i) => `${wd} <b>${arr[i].toFixed(3)}</b>`).join(' · ');
       let html;
       if (st.step === 0) {
-        html = `Attention weight dog → man: <b>${r0.a.A[0][2].toFixed(3)}</b> in “dog bites man”, <b>${r0.b.A[0][2].toFixed(3)}</b> in “man bites dog”. Same three vectors, same weights.`;
+        html = `How much dog attends to man: <b>${r0.a.A[0][2].toFixed(3)}</b> in “dog bites man”, <b>${r0.b.A[0][2].toFixed(3)}</b> in “man bites dog”. Same three vectors, same weights.`;
       } else if (st.step === 1) {
         html = `Largest output difference between the sentences: ${d3(r0.diff)}. Each output fills the other sentence’s outline exactly.`;
       } else {
@@ -513,7 +531,8 @@
     cv.onResize((w, h) => { st.G = geom(w, h); draw(); });
     ctx.loop((t, dt) => {
       st.clock += dt;
-      st.u = swapU(st.clock);
+      // reduced motion: the loop runs at ~2 fps, so swap in one clean cut instead of gliding
+      st.u = AM.reducedMotion ? Math.floor(st.clock / (CYC / 2)) % 2 : swapU(st.clock);
       st.posMix = approach(st.posMix, st.step >= 2 ? 1 : 0, dt * 3.2);
       st.ghostMix = approach(st.ghostMix, st.step >= 3 ? 1 : 0, dt * 3.2);
       st.outMix = approach(st.outMix, st.step >= 1 ? 1 : 0.35, dt * 3.2);
@@ -531,8 +550,11 @@
     const LAST = 12;                       // the dial ticks through positions 0…12, then rewinds
     const st = { pos: 0, anim: 0, from: 0, k: 1, dur: 0.4, fn: EASE.outBack, hold: 0, playing: true };
     const SIN = AM.dye.cochineal, COS = AM.dye.verdigris;
+    // Side-by-side layout needs room for the dial (2R + margins) plus ~205px of formula text.
+    const NARROW_W = 480;
+    const wideR = (w, h) => Math.min(h * 0.36, w * 0.27, 128, (w - 283) / 2);
     const cv = ctx.canvas(null, {
-      height: (w) => (w < 440 ? Math.round(Math.min(w * 0.33, 120) * 2 + 156) : clamp(Math.round(w * 0.74), 300, 380)),
+      height: (w) => (w < NARROW_W ? Math.round(Math.min(w * 0.33, 120) * 2 + 156) : clamp(Math.round(w * 0.74), 300, 380)),
       label: 'One clock hand of the positional encoding. Its tip has two coordinates: how far across is the cosine value and how far up is the sine value. Beads on the rim mark where the hand pointed at earlier positions, each one radian further round.',
     });
 
@@ -540,8 +562,8 @@
       if (!cv.w) return;
       const g = cv.g, w = cv.w, h = cv.h;
       cv.clear();
-      const narrow = w < 440;
-      const R = narrow ? Math.min(w * 0.33, 120) : Math.min(h * 0.36, w * 0.27, 128);
+      const narrow = w < NARROW_W;
+      const R = narrow ? Math.min(w * 0.33, 120) : wideR(w, h);
       const cx = narrow ? w / 2 : R + 34, cy = narrow ? R + 34 : h / 2;
       const a = st.anim, th = a; // hand 0: ω₀ = 1 radian per position
       const pNow = Math.round(clamp(a, 0, LAST));
@@ -579,7 +601,7 @@
       DR.text(g, 'sin', cx + (Math.cos(th) >= 0 ? -7 : 7), tipY + 4, { size: 10, role: 'mono', color: SIN, align: Math.cos(th) >= 0 ? 'right' : 'left' });
 
       // the two numbers the hand stands for
-      const tx = narrow ? 8 : cx + R + 44, ty = narrow ? cy + R + 46 : cy - 40;
+      const tx = narrow ? 8 : cx + R + 38, ty = narrow ? cy + R + 46 : cy - 40;
       const s = Math.sin(pNow), c = Math.cos(pNow);
       DR.text(g, `POSITION ${pNow}`, tx, ty, { size: 9.5, role: 'mono', color: AM.col.mist, letterSpacing: '0.12em' });
       DR.text(g, `PE(${pNow}, 0) = sin(${pNow})`, tx, ty + 24, { size: 11, role: 'mono', color: SIN });
@@ -623,6 +645,7 @@
       playing: !AM.reducedMotion, hold: 0, clock: 0,
       hover: null, dragging: false, swept: false, sweeping: false,
       wake: new Float32Array(N), hist: [], waves: [], lastWave: -1, boost: 0, shown: -1, G: null, lastAnim: 0, readoutHtml: '',
+      dirty: true, idleFrames: 0,
     };
     const TICK_MOVE = 0.3, TICK_HOLD = 0.34;
 
@@ -756,7 +779,11 @@
       st.playing = on;
       playBtn.textContent = on ? 'Pause' : 'Play';
       playBtn.setAttribute('aria-pressed', String(on));
-      if (!on) st.sweeping = false;
+      if (!on && st.sweeping) {
+        // pausing mid wind-up: settle on the nearest whole position instead of finishing the sweep
+        st.sweeping = false;
+        setTarget(clamp(Math.round(st.anim), 0, N - 1), 0.25, EASE.out);
+      }
     }
     const slider = AM.ui.slider({
       id: 'pos-clock-pos', label: 'Position', min: 0, max: N - 1, step: 1, value: 0, format: (v) => String(v),
@@ -765,7 +792,7 @@
     const seg = AM.ui.segmented({
       id: 'pos-clock-d', label: 'd_model', value: st.d,
       options: [16, 32, 64].map((v) => ({ value: v, label: String(v) })),
-      onChange: (v) => { st.d = v; T = buildTables(v); renderCaches(); updateReadout(true); draw(); },
+      onChange: (v) => { st.d = v; st.hover = null; T = buildTables(v); renderCaches(); updateReadout(true); st.dirty = true; draw(); },
     });
     seg.el.classList.add('pos-lc');
     const BITS = 6;
@@ -777,7 +804,7 @@
 
     const fig = AM.ui.figure({
       title: 'The position clockwork', badge: AM.ui.badge('toy', 'Exact formula'), cls: 'pos-clock-fig',
-      caption: `Exact formula for positions 0–63. Each dial drives the two columns beneath it; gold hands are fast, blue ones slow. The tall map is the encoding table, one row per position (cream = +1, ink = −1). The square map is the cosine similarity between every pair of positions, colour stretched from its lowest value to 1. Drag or tap a map to move the shuttle; hover or tap any cell to read its formula.`,
+      caption: `Exact formula for positions 0–63. Each dial drives the two columns beneath it; gold hands are fast, blue ones slow. The tall map is the encoding table, one row per position (cream = +1, blue = 0, ink = −1). The square map is the cosine similarity between every pair of positions, colour stretched from its lowest value to 1. Drag or tap a map to move the shuttle; hover or tap any cell to read its formula.`,
     }, cv.wrap, controls, readout);
 
     // ---------- readout
@@ -791,8 +818,8 @@
         const k = h.i - h.j, raw = dot(T.P[h.i], T.P[h.j]);
         html = `PE(${h.i})·PE(${h.j}) = Σ<sub>i</sub> cos((${h.i} − ${h.j})·ω<sub>i</sub>) = <b>${fmt(raw, 3)}</b>, cosine <b>${fmt(T.S[h.i][h.j], 3)}</b> <span class="pos-dim">· the same for every pair ${Math.abs(k)} apart (the lit diagonal)</span>`;
       } else if (h && h.type === 'dial') {
-        const w_ = omega(h.i, d);
-        html = `Hand ${h.i} (dims ${2 * h.i}, ${2 * h.i + 1}) turns ω = 10000<sup>−${2 * h.i}/${d}</sup> = <b>${w_ < 0.01 ? w_.toExponential(2) : fmt(w_, 4)}</b> rad per position: one full turn every <b>${thousands(TAU / w_)}</b> positions. At position ${p} it points at ${fmt((p * w_) % TAU, 3)} rad.`;
+        const w_ = omega(h.i, d), per = TAU / w_;
+        html = `Hand ${h.i} (dims ${2 * h.i}, ${2 * h.i + 1}) turns ω = 10000<sup>−${2 * h.i}/${d}</sup> = <b>${w_ < 0.01 ? w_.toExponential(2) : fmt(w_, 4)}</b> rad per position: one full turn every <b>${per < 100 ? per.toFixed(1) : thousands(per)}</b> positions. At position ${p} it points at ${fmt((p * w_) % TAU, 3)} rad.`;
       } else {
         html = `Position <b>${p}</b>: hand 0 has turned ${p} rad, so PE(${p}, 0) = sin(${p}) = <b>${fmt(Math.sin(p), 3)}</b> and PE(${p}, 1) = cos(${p}) = <b>${fmt(Math.cos(p), 3)}</b>. <span class="pos-dim">Hover or tap the dials and maps to read more.</span>`;
       }
@@ -802,7 +829,6 @@
       const shown = clamp(Math.round(st.anim), 0, N - 1);
       if (shown === st.shown) return;
       if (st.shown >= 0 && st.clock - st.lastWave > 0.18) { st.waves.push(st.clock); st.lastWave = st.clock; }
-      while (st.waves.length && st.clock - st.waves[0] > 0.7) st.waves.shift();
       st.shown = shown;
       if (Math.round(slider.get()) !== shown && !st.draggingSlider) slider.set(shown);
       const b = shown.toString(2).padStart(BITS, '0');
@@ -825,8 +851,11 @@
       const aOld = clamp(trailFrom(), -0.45, N - 0.55);
       const hv = st.hover;
 
-      // ---- header
-      DR.text(g, G.wide ? 'ONE DIAL PER SIN/COS PAIR · NUMBER = POSITIONS PER TURN' : 'ONE DIAL PER SIN/COS PAIR · POSITIONS PER TURN', G.hx, 10, { size: 9, role: 'mono', color: AM.col.mist, letterSpacing: '0.1em' });
+      // ---- header (the longest wording that fits; mono at 9px with 0.1em tracking)
+      const room = (G.wide ? G.hw : G.w - G.hx) - 4;
+      const header = ['ONE DIAL PER SIN/COS PAIR · NUMBER = POSITIONS PER TURN', 'ONE DIAL PER SIN/COS PAIR · POSITIONS PER TURN', 'ONE DIAL PER PAIR · POSITIONS PER TURN']
+        .find((s) => DR.measure(g, s, 9, 'mono') + 0.9 * s.length <= room) || 'DIALS · POSITIONS PER TURN';
+      DR.text(g, header, G.hx, 10, { size: 9, role: 'mono', color: AM.col.mist, letterSpacing: '0.1em' });
 
       // ---- dial train + the silk threads each dial hangs into its two columns
       const tr = dialTrain(G.hw, d, G.wide), r = tr.r;
@@ -968,7 +997,7 @@
       DR.text(g, 'dim 0', G.hx, by, { size: 9, role: 'mono', color: AM.col.mist });
       DR.text(g, `dim ${d - 1}`, G.hx + G.hw, by, { size: 9, role: 'mono', color: AM.col.mist, align: 'right' });
       DR.text(g, G.wide ? '← fast hands · slow hands →' : '← fast · slow →', G.hx + G.hw / 2, by, { size: 9, role: 'mono', color: AM.col.linenDim, align: 'center' });
-      if (G.wide) DR.text(g, 'cream = +1 · ink = −1', G.hx + G.hw / 2, by + 15, { size: 8.5, role: 'mono', color: AM.col.mist, align: 'center' });
+      if (G.wide) DR.text(g, 'cream = +1 · blue = 0 · ink = −1', G.hx + G.hw / 2, by + 15, { size: 8.5, role: 'mono', color: AM.col.mist, align: 'center' });
       // similarity axes
       const sb = G.sy + G.sw + 14;
       DR.text(g, '0', G.sx, sb, { size: 9, role: 'mono', color: AM.col.mist });
@@ -1053,8 +1082,10 @@
       }
       updateReadout(); draw();
     });
+    const sameHit = (a, b) => (!a && !b) || (a && b && a.type === b.type && a.i === b.i && a.j === b.j && a.p === b.p);
     cv.canvas.addEventListener('pointermove', (e) => {
       const h = hit(cv.pointer(e));
+      if (!sameHit(h, st.hover)) st.dirty = true;
       st.hover = h;
       if (st.dragging && h && (h.type === 'heat' || h.type === 'sim') && rowOf(h) !== st.pos) jumpTo(rowOf(h));
       updateReadout();
@@ -1103,7 +1134,13 @@
       st.hist.push({ t: st.clock, a: st.anim });
       while (st.hist.length && st.hist[0].t < st.clock - 0.5) st.hist.shift();
       syncUI();
-      draw();
+      while (st.waves.length && st.clock - st.waves[0] > 0.7) st.waves.shift();
+      // paused and settled: skip redrawing an unchanged frame (hover, resize and d changes set dirty)
+      let glow = st.boost > 0.01 || st.waves.length > 0 || st.k < 1 || st.playing || Math.abs(trailFrom() - st.anim) > 1e-3;
+      if (!glow) for (let p = 0; p < N; p++) if (st.wake[p] > 0.02) { glow = true; break; }
+      if (glow || st.dirty || st.idleFrames < 3) draw();
+      st.idleFrames = glow || st.dirty ? 0 : st.idleFrames + 1;
+      st.dirty = false;
     });
     syncUI();
     updateReadout(true);
@@ -1140,7 +1177,7 @@
     // the score as a function of the offset alone: S(Δ) = RoPE(q, Δ)·RoPE(k, 0)
     const curve = Array.from({ length: 2 * MAXP + 1 }, (_, i) => score(i - MAXP, 0));
     const cMin = Math.min(...curve), cMax = Math.max(...curve);
-    const thLabel = (t) => (t >= 0.1 ? t.toFixed(1) : t.toFixed(3));
+    const thLabel = (t) => String(+t.toPrecision(2)); // 1, 0.1, 0.01, 0.001
 
     const st = { m: 7, n: 3, am: 7, an: 3, pair: 0, msg: '', dirty: true, flash: 0 };
 
@@ -1149,7 +1186,7 @@
       const G = { w, wide };
       if (wide) {
         G.R = Math.min(w * 0.24, 132);
-        G.cx = G.R + 10; G.cy = 40 + G.R;
+        G.cx = G.R + 18; G.cy = 40 + G.R; // room for the q / k labels beyond the rim
         const x0 = G.cx + G.R + 26, aw = w - x0;
         G.mr = Math.min(aw / 5.2, 30);
         G.mx = [0, 1, 2, 3].map((i) => x0 + aw * (i % 2 ? 0.74 : 0.26));
@@ -1397,6 +1434,145 @@
   }
 
   // ======================================================================
+  // 7b. Figure E (live model): the tiny transformer's learned position table
+  // ======================================================================
+
+  /**
+   * The real tiny model ('tinyworld') learns one position vector per seat.
+   * We read them with its public forward pass: feed one word n_ctx times, so
+   * the first residual vector at seat t is wte[word] + wpe[t]; subtracting the
+   * average over seats leaves wpe[t] minus the table's mean. Cosine similarity
+   * of those rows is set beside the sinusoids for the same seats and width.
+   * Returns null (and the page simply omits the figure) when no model ships.
+   */
+  function mountLearned(ctx) {
+    let ok = false;
+    try { ok = !!(AM.model && AM.model.ready && typeof AM.model.get === 'function' && AM.model.list().includes('tinyworld')); } catch (_) { ok = false; }
+    if (!ok) return null;
+    const { el } = ctx;
+    const st = { L: null, S: null, N: 0, d: 0, hover: null, stats: null };
+    const cv = ctx.canvas(null, {
+      height: (w) => Math.round(Math.max(120, (w - 36 - 18) / 2) + 76),
+      label: 'Two square maps of cosine similarity between positions. Left: the position vectors the tiny live model learned in training. Right: sinusoidal encodings for the same positions and width. Both are brightest along the diagonal.',
+    });
+    cv.canvas.style.cursor = 'crosshair';
+    const readout = el('p', { class: 'pos-readout' }, 'Reading the tiny model’s position table…');
+    const fig = AM.ui.figure({
+      title: 'What the tiny model learned', badge: 'live', cls: 'pos-live-fig',
+      caption: 'Live model: the tiny transformer on this page feeds one word through every seat, and its first residual vectors, minus their average, give its learned position vectors. Left: cosine similarity between every pair of them. Right: sinusoids for the same seats and width. One colour scale for both, from −1 (ink) to 1 (cream). Its table started as faint sinusoids and was reshaped by training. Hover or tap a cell to compare.',
+    }, cv.wrap, readout);
+
+    const geom = (w) => {
+      const lm = 22, gap = 18, top = 24;
+      const s = Math.max(120, Math.floor((w - lm - gap - 14) / 2));
+      return { lm, gap, top, s, x0: lm, x1: lm + s + gap, y0: top, barY: top + s + 22 };
+    };
+
+    function compute() {
+      const m = AM.model.get('tinyworld');
+      const N = m.config.n_ctx, d = m.config.d_model;
+      let id = typeof m.tokenId === 'function' ? m.tokenId('the') : -1;
+      if (id < 0) id = Math.min(2, m.vocab.length - 1);
+      const R = m.run(new Array(N).fill(id), { capture: true }).resid[0];
+      const mu = new Float64Array(d);
+      R.forEach((x) => { for (let j = 0; j < d; j++) mu[j] += x[j] / N; });
+      const P = R.map((x) => Array.from(x, (v, j) => v - mu[j]));
+      const cos = (a, b) => dot(a, b) / (Math.sqrt(dot(a, a) * dot(b, b)) || 1);
+      st.L = P.map((a) => P.map((b) => cos(a, b)));
+      const PE = Array.from({ length: N }, (_, p) => sinusoid(p, d));
+      st.S = PE.map((a) => PE.map((b) => dot(a, b) / (d / 2)));
+      st.N = N; st.d = d;
+      // a few facts for the readout, all read off the two matrices
+      const near = (M) => { let s = 0; for (let i = 0; i + 1 < N; i++) s += M[i][i + 1]; return s / (N - 1); };
+      let lo = { v: 2, i: 0, j: 0 }, sLo = 2;
+      for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
+        if (st.L[i][j] < lo.v) lo = { v: st.L[i][j], i, j };
+        if (st.S[i][j] < sLo) sLo = st.S[i][j];
+      }
+      st.stats = { nearL: near(st.L), nearS: near(st.S), lo, sLo };
+    }
+
+    function setReadout() {
+      if (!st.L) return;
+      const h = st.hover, N = st.N;
+      if (h) {
+        readout.innerHTML = `Positions ${h.i} and ${h.j} (${Math.abs(h.i - h.j)} apart): learned <b>${fmt(st.L[h.i][h.j], 3)}</b> · sinusoid <b>${fmt(st.S[h.i][h.j], 3)}</b>`;
+      } else {
+        const s = st.stats, a = Math.min(s.lo.i, s.lo.j), b = Math.max(s.lo.i, s.lo.j);
+        readout.innerHTML = `${N} positions × ${st.d} numbers. Next-door positions average <b>${fmt(s.nearL, 2)}</b> learned and <b>${fmt(s.nearS, 2)}</b> sinusoid. `
+          + `The least similar learned pair is ${a} and ${b} at <b>${fmt(s.lo.v, 2)}</b> (about ${Math.round((Math.acos(clamp(s.lo.v, -1, 1)) * 180) / Math.PI)}° apart); the sinusoids never drop below <b>${fmt(s.sLo, 2)}</b> here.`;
+      }
+    }
+
+    function map(g, x, y, s, M, label) {
+      const N = M.length, c = s / N;
+      for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
+        g.fillStyle = AM.color.heat((M[i][j] + 1) / 2);
+        g.fillRect(x + j * c, y + i * c, c + 0.4, c + 0.4);
+      }
+      g.strokeStyle = AM.col.rule; g.lineWidth = 1; g.strokeRect(x - 0.5, y - 0.5, s + 1, s + 1);
+      DR.text(g, label, x, y - 9, { size: 9, role: 'mono', color: AM.col.linenDim, letterSpacing: '0.08em' });
+      DR.text(g, '0', x - 5, y + c / 2 + 3, { size: 8.5, role: 'mono', color: AM.col.mist, align: 'right' });
+      DR.text(g, String(N - 1), x - 5, y + s - c / 2 + 3, { size: 8.5, role: 'mono', color: AM.col.mist, align: 'right' });
+    }
+
+    function draw() {
+      if (!cv.w) return;
+      const g = cv.g, G = geom(cv.w);
+      cv.clear();
+      if (!st.L) {
+        DR.text(g, 'loading the tiny model…', cv.w / 2, cv.h / 2, { size: 10, role: 'mono', color: AM.col.mist, align: 'center' });
+        return;
+      }
+      const N = st.N, c = G.s / N;
+      map(g, G.x0, G.y0, G.s, st.L, G.s > 170 ? 'LEARNED · TINY MODEL' : 'LEARNED');
+      map(g, G.x1, G.y0, G.s, st.S, G.s > 170 ? `SINUSOIDS · d = ${st.d}` : 'SINUSOIDS');
+      if (st.hover) {
+        const { i, j } = st.hover;
+        for (const x of [G.x0, G.x1]) {
+          g.save();
+          g.strokeStyle = AM.rgba(AM.col.linen, 0.3); g.lineWidth = 1;
+          g.strokeRect(x - 0.5, G.y0 + i * c - 0.5, G.s + 1, c + 1);
+          g.strokeStyle = AM.col.linen; g.lineWidth = 1.4;
+          g.strokeRect(x + j * c - 1, G.y0 + i * c - 1, c + 2, c + 2);
+          g.restore();
+        }
+      }
+      // shared colour scale
+      const bx = G.x0, bw = G.x1 + G.s - G.x0, by = G.barY;
+      for (let k = 0; k < 64; k++) { g.fillStyle = AM.color.heat(k / 63); g.fillRect(bx + (k / 64) * bw, by, bw / 64 + 0.5, 5); }
+      DR.text(g, '−1', bx, by + 18, { size: 8.5, role: 'mono', color: AM.col.mist });
+      DR.text(g, '0', bx + bw / 2, by + 18, { size: 8.5, role: 'mono', color: AM.col.mist, align: 'center' });
+      DR.text(g, '1', bx + bw, by + 18, { size: 8.5, role: 'mono', color: AM.col.mist, align: 'right' });
+      const scaleLabel = 'one colour scale for both';
+      if (DR.measure(g, scaleLabel, 8.5, 'mono') + 48 < bw / 2) DR.text(g, scaleLabel, bx + bw / 4, by + 18, { size: 8.5, role: 'mono', color: AM.col.linenDim, align: 'center' });
+    }
+
+    const hit = (pt) => {
+      if (!st.L) return null;
+      const G = geom(cv.w), N = st.N;
+      for (const x of [G.x0, G.x1]) {
+        if (pt.x >= x && pt.x < x + G.s && pt.y >= G.y0 && pt.y < G.y0 + G.s) {
+          return { i: clamp(Math.floor(((pt.y - G.y0) / G.s) * N), 0, N - 1), j: clamp(Math.floor(((pt.x - x) / G.s) * N), 0, N - 1) };
+        }
+      }
+      return null;
+    };
+    const onPt = (e) => {
+      const h = hit(cv.pointer(e));
+      if ((h && st.hover && h.i === st.hover.i && h.j === st.hover.j) || (!h && !st.hover)) return;
+      st.hover = h; setReadout(); draw();
+    };
+    cv.canvas.addEventListener('pointermove', onPt);
+    cv.canvas.addEventListener('pointerdown', onPt);
+    cv.canvas.addEventListener('pointerleave', () => { if (st.hover) { st.hover = null; setReadout(); draw(); } });
+
+    cv.onResize(draw);
+    AM.model.ready.then(() => { compute(); setReadout(); draw(); }).catch(() => { fig.remove(); });
+    return fig;
+  }
+
+  // ======================================================================
   // 8. Chapter-scoped styles
   // ======================================================================
 
@@ -1419,7 +1595,8 @@
     #ch-position .pos-bits-num { grid-area: n; }
     #ch-position .pos-clock-sec { display: grid; gap: var(--space-6); }
     #ch-position .pos-notes { align-items: start; }
-    #ch-position .pos-notes .prose, #ch-position .pos-intro .prose { max-width: none; }
+    #ch-position .pos-notes .prose, #ch-position .pos-intro .prose, #ch-position .pos-learned .prose { max-width: none; }
+    #ch-position .pos-learned { align-items: start; }
     #ch-position .pos-intro { align-items: center; }
     #ch-position .math.block { font-size: 0.82em; }
     #ch-position .step .math.block { margin-block: 2px; }
@@ -1471,13 +1648,13 @@
         step('02 · Equivariance', 'Shuffle in, shuffle out',
           P('Each output is a weighted mix of the value vectors, with weights from <span class="math">softmax(q·k / √d)</span>. Reorder the inputs and every weight travels with its token, so the outputs are the same vectors in the new order.'),
           P('This property is called <span class="term">permutation equivariance</span>: <span class="math">Attn(PX) = P · Attn(X)</span> for any reordering <span class="math">P</span>. Below the bag, each output sits exactly inside the outline of the same word’s output from the other sentence.'),
-          P('GPT-style models also use a causal mask, so each token sees only the ones before it. That leaks a little order information, and models trained with no positions at all learn to exploit it. In practice, models are almost always given positions explicitly.')),
+          P('GPT-style models also use a causal mask, so each token sees only itself and the tokens before it. That leaks a little order information, and models trained with no positions at all learn to exploit it. In practice, models are almost always given positions explicitly.')),
         step('03 · The fix', 'Stamp every seat',
           P('Give each position <span class="math">t</span> its own vector <span class="math">p<sub>t</sub></span>, the same length as the embeddings, and add it:'),
           el('span', { class: 'math block' }, 'x', el('sub', {}, 't'), ' = e(token', el('sub', {}, 't'), ') + p', el('sub', {}, 't')),
           P(`Now “dog” in seat 0 and “dog” in seat 2 are different vectors. The beads in the bag move with every reorder, the attention weights change, and the outputs part ways: dog’s output now differs by up to <strong>${r1.diff[0].toFixed(2)}</strong> between the sentences.`),
           P('The little clocks over the seats are the position vectors. Each hand is one sin/cos pair; we open the clock up just below.')),
-        step('04 · Why add?', 'Adding, not appending',
+        step('04 · Why add?', 'Two messages in one vector',
           P('Why add the position instead of appending it as extra numbers? Adding keeps every vector at <span class="math">d_model</span> numbers and costs nothing.'),
           P('It works because the space is roomy. With hundreds of dimensions, token information and position information can sit in nearly separate directions, and the layers learn to read each one.'),
           P('In the bag, each dashed ring is the bare embedding and the gold arrow is the position vector added to it. The shadow is a linear projection, so it keeps the sum honest: the arrow for a seat is the same whichever word sits there.')),
@@ -1496,6 +1673,8 @@
         P('Read each sin/cos pair as the tip of a clock hand: cos is how far it points right, sin how far up. One step forward turns hand <span class="math">i</span> by <span class="math">ω<sub>i</sub></span> radians. Hand 0 turns one radian per step and goes round every 6.3 positions. Each hand after it is slower by the same factor, down to the last, which needs about ' + lastPeriod + ' positions for one turn when <span class="math">d = 32</span>.'),
         P('Fast hands tell neighbours apart; slow hands tell distant positions apart. A clock does the same with its second, minute and hour hands, and a binary counter with its bits: the lowest flips every step, each higher bit half as often.'));
       const clock = mountClockwork(ctx);
+      const learned = mountLearned(ctx); // null when the page ships without the live model
+      const learnedP = P('The alternative is to learn the position vectors like word embeddings, one trainable row per position. GPT-2 learns 1,024 of them, and the tiny live model on this page learns its own too. The 2017 paper found the two approaches worked about equally well, though a learned table has nothing to offer past the longest position seen in training.');
       const notes = el('div', { class: 'grid-2 pos-notes' },
         el('div', { class: 'prose' },
           el('h3', {}, 'Nearby positions look alike'),
@@ -1503,19 +1682,26 @@
           el('span', { class: 'math block' }, 'sin a · sin b + cos a · cos b = cos(a − b)'),
           P('so the whole dot product is'),
           el('span', { class: 'math block' }, 'PE(a) · PE(b) = Σ', el('sub', {}, 'i'), ' cos((a − b) · ω', el('sub', {}, 'i'), ')'),
-          P('Only the offset <span class="math">a − b</span> appears. Neighbours score high and the score fades with distance: that is the glowing band in the square map. Every diagonal of that map holds a single value.')),
+          P('Only the offset <span class="math">a − b</span> appears. Neighbours score high. Farther apart, the score drops and ripples as the fast hands drift in and out of step. That is the glowing band in the square map and the wavy curve above it. Every diagonal of the map holds a single value.')),
         el('div', { class: 'prose' },
           el('h3', {}, 'A shift is a rotation'),
           P('Moving <span class="math">k</span> places forward turns every hand by <span class="math">k · ω<sub>i</sub></span>, wherever it started. So <span class="math">PE(pos + k)</span> is a fixed rotation of <span class="math">PE(pos)</span>, the same linear map for every <span class="math">pos</span>. The authors chose sinusoids hoping this would make relative positions easy to learn.'),
-          P('The alternative is to learn the position vectors like word embeddings, one trainable row per position. GPT-2 learns 1,024 of them, and the tiny live model on this page learns its own too. The 2017 paper found the two approaches worked about equally well, though a learned table has nothing to offer past the longest position seen in training.')));
+          learned ? null : learnedP));
+      // with the live model on the page, learned positions get their own row: prose beside the live figure
+      const learnedRow = learned ? el('div', { class: 'grid-2 pos-learned' },
+        el('div', { class: 'prose' },
+          el('h3', {}, 'Or learn the positions'),
+          learnedP,
+          P('The tiny model’s own table, read live in the figure, also keeps neighbours alike: the bright diagonal. Farther apart it is freer than the sinusoids, and some pairs end up pointing well apart, the dark patches. Nobody designed that pattern; it came out of training.')),
+        learned) : null;
       const introGrid = el('div', { class: 'grid-2 pos-intro' }, clockIntro, mountAnatomy(ctx));
-      const clockSec = el('div', { class: 'ch-wide pos-clock-sec' }, introGrid, clock.el, notes);
+      const clockSec = el('div', { class: 'ch-wide pos-clock-sec' }, introGrid, clock.el, notes, learnedRow);
 
       // ---- RoPE
       const rope = mountRope(ctx);
       const ropeProse = el('div', { class: 'prose' },
         el('h3', {}, 'Rotate the query and key instead'),
-        P('Most open models today, including Llama, Mistral and Qwen, use <span class="term">rotary position embeddings</span> (RoPE; Su et al., 2021). Nothing is added to the token vectors. Inside every attention layer, each query and key is split into pairs, and pair <span class="math">i</span> is rotated by its position times <span class="math">θ<sub>i</sub> = 10000<sup>−2i/d</sup></span>, the same clock speeds as before.'),
+        P('Most open models today, including Llama, Mistral and Qwen, use <span class="term">rotary position embeddings</span> (RoPE; Su et al., 2021). Nothing is added to the token vectors. Inside every attention layer, each query and key is split into pairs, and pair <span class="math">i</span> is rotated by its position times <span class="math">θ<sub>i</sub> = 10000<sup>−2i/d</sup></span>, the same clock speeds as before (here <span class="math">d</span> is the size of one head).'),
         P('A rotation keeps lengths. Turning the query by <span class="math">m·θ<sub>i</sub></span> and the key by <span class="math">n·θ<sub>i</sub></span> changes the angle between them by <span class="math">(m − n)·θ<sub>i</sub></span>, so the score <span class="math">q·k</span> depends on the two contents and on the offset <span class="math">m − n</span>, never on <span class="math">m</span> or <span class="math">n</span> alone. Slide both together and the score holds still.'),
         P('<span class="term">ALiBi</span> (Press et al., 2021) is simpler still. It adds no vectors at all; it subtracts a penalty proportional to distance from every attention score, <span class="math">score − s·(m − n)</span>, with a different slope <span class="math">s</span> for each head, so far-away tokens are down-weighted, some heads steeply and some gently.'),
         mountAlibi(ctx));
@@ -1523,7 +1709,7 @@
 
       const callout = el('div', { class: 'callout' },
         el('span', { class: 'callout-label' }, 'Key idea'),
-        P('Attention treats its input as a bag, so order has to be written into the vectors themselves. The original Transformer adds a bank of clock hands turning at geometrically spaced speeds. GPT-2 learns its position vectors. RoPE rotates queries and keys so that attention scores depend on how far apart two tokens are.'));
+        P('Attention treats its input as a bag, so order has to be written into the vectors themselves. The original Transformer adds a bank of clock hands turning at geometrically spaced speeds. GPT-2 learns its position vectors. RoPE rotates queries and keys, so position reaches the attention scores only as the distance between two tokens.'));
 
       root.appendChild(el('div', { class: 'ch-body' }, split, clockSec, ropeGrid, callout));
     },

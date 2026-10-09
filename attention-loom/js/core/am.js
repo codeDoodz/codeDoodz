@@ -281,13 +281,18 @@
         els.forEach((el, j) => el.classList.toggle('is-active', j === i));
         try { onStep(i, els[i]); } catch (e) { console.error(`[${def.id}] step`, e); }
       };
-      if (typeof IntersectionObserver !== 'undefined') {
-        const io = new IntersectionObserver((entries) => {
-          for (const en of entries) if (en.isIntersecting) set(els.indexOf(en.target));
-        }, { rootMargin: '-45% 0px -45% 0px', threshold: 0 });
-        els.forEach((el) => io.observe(el));
-      }
+      // The active step is the last one whose top edge has crossed a line a little
+      // below mid-screen. Computed from layout on scroll (not from intersection
+      // events) so it stays right after instant jumps, rail clicks and resizes.
+      const pick = () => {
+        const line = window.innerHeight * 0.58;
+        let idx = 0;
+        for (let j = 0; j < els.length; j++) if (els[j].getBoundingClientRect().top < line) idx = j;
+        set(idx);
+      };
+      stepPickers.push({ ctx, pick });
       set(0);
+      ctx.onVisible(pick);
       return { set, get current() { return current; } };
     };
 
@@ -310,6 +315,16 @@
     live.push(ctx);
     if (io) io.observe(root);
   }
+
+  // Scroll-driven step pickers (see ctx.steps), throttled to one pass per frame.
+  const stepPickers = [];
+  let stepRaf = 0;
+  const runPickers = () => {
+    stepRaf = 0;
+    for (const p of stepPickers) if (p.ctx.visible) { try { p.pick(); } catch (e) { console.error(e); } }
+  };
+  window.addEventListener('scroll', () => { if (!stepRaf) stepRaf = requestAnimationFrame(runPickers); }, { passive: true });
+  window.addEventListener('resize', () => { if (!stepRaf) stepRaf = requestAnimationFrame(runPickers); });
 
   // Visibility tracking: one observer for all chapters.
   let io = null;

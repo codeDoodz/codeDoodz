@@ -302,7 +302,7 @@ button, input, select { font: inherit; color: inherit; }
   top: calc(env(safe-area-inset-top, 0px) + 6vh);
   min-width: 0;
 }
-.ch-prose { min-width: 0; display: grid; gap: 38vh; padding-block: 12vh 30vh; }
+.ch-prose { min-width: 0; display: grid; gap: 26vh; padding-block: 10vh 26vh; }
 .ch-prose > .step:first-child { margin-top: 0; }
 
 @media (max-width: 900px) {
@@ -316,7 +316,7 @@ button, input, select { font: inherit; color: inherit; }
     padding-inline: var(--gutter);
     box-shadow: 0 18px 24px -18px var(--ink);
   }
-  .ch-prose { gap: 28vh; padding-block: 4vh 20vh; }
+  .ch-prose { gap: 22vh; padding-block: 4vh 18vh; }
 }
 
 .ch-wide { min-width: 0; }

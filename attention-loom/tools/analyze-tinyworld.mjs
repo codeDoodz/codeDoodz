@@ -5,7 +5,9 @@
 //   - the logit lens: mean P(correct word) read off the residual stream after each layer
 // plus a few curated sentences with the model's top predictions.
 //
-//   node tools/analyze-tinyworld.mjs [--md]
+//   node tools/analyze-tinyworld.mjs [--md] [--write-meta]
+// --write-meta stores the head/lens summary in js/model/weights-tinyworld.js as meta.analysis
+// (so chapters can read it from AM.model.get('tinyworld').meta.analysis).
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadModelScripts, ROOT } from './vm-load.mjs';
@@ -65,6 +67,7 @@ for (const s of test) {
   }
 }
 
+const analysis = { heads: {}, lens: {}, prevToken: prevTok.map(row => Array.from(row, v => +(v / nSeq).toFixed(3))) };
 const out = [];
 const say = (s) => out.push(s);
 say(md ? '| type | n | top heads → evidence token (mean attention) | logit lens: P(correct) after embed, L0, L1, … |' : 'type        heads attending to the evidence token            logit lens P(correct) by layer');
@@ -75,6 +78,8 @@ for (const [type, st] of Object.entries(stats).sort()) {
   heads.sort((a, b) => b.a - a.a);
   const hs = heads.slice(0, 3).map(x => `L${x.l}H${x.h} ${x.a.toFixed(2)}`).join(', ');
   const lens = Array.from(st.lens, v => (v / st.n).toFixed(2)).join(' → ');
+  analysis.heads[type] = heads.slice(0, 3).map(x => ({ layer: x.l, head: x.h, attn: +x.a.toFixed(3) }));
+  analysis.lens[type] = Array.from(st.lens, v => +(v / st.n).toFixed(3));
   say(md ? `| ${type} | ${st.n} | ${hs} | ${lens} |` : `${type.padEnd(11)} ${hs.padEnd(45)} ${lens}`);
 }
 
@@ -97,3 +102,13 @@ for (const t of examples) {
   say(md ? `- \`${t} …\` → ${top}` : `  ${t.padEnd(64)} → ${top}`);
 }
 console.log(out.join('\n'));
+
+if (process.argv.includes('--write-meta')) {
+  const file = path.join(ROOT, 'js/model/weights-tinyworld.js');
+  const src = fs.readFileSync(file, 'utf8');
+  const start = src.indexOf('{', src.indexOf('.tinyworld = ')), end = src.trimEnd().lastIndexOf(';');
+  const obj = JSON.parse(src.slice(start, end));
+  obj.meta.analysis = Object.assign({ note: 'heads: mean attention from the predicting position to the evidence token on the held-out set (top 3); lens: mean P(correct) decoded from resid[0..n_layer]; prevToken[l][h]: mean attention to t-1. Written by tools/analyze-tinyworld.mjs.' }, analysis);
+  fs.writeFileSync(file, src.slice(0, start) + JSON.stringify(obj) + src.slice(end));
+  console.log('wrote meta.analysis to ' + path.relative(ROOT, file));
+}

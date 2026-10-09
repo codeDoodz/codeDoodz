@@ -2,7 +2,8 @@
 //
 //   node tools/train.mjs reverse      # JS trainer, ~10 s
 //   node tools/train.mjs sort         # JS trainer, ~2 min
-//   node tools/train.mjs tinyworld    # writes the corpus, then runs tools/train_tinyworld.py (numpy, ~20 min)
+//   node tools/train.mjs tinyworld    # writes the corpus, runs tools/train_tinyworld.py (numpy, ~25 min),
+//                                     # then tools/analyze-tinyworld.mjs --write-meta
 //   node tools/train.mjs all
 //
 // reverse/sort use EXACTLY the code and default hyper-parameters the in-page Lab
@@ -85,6 +86,9 @@ function trainTinyworld(extra) {
   let r = spawnSync(process.execPath, [path.join(ROOT, 'tools/data-tinyworld.mjs'), '--out', dataDir], { stdio: 'inherit' });
   if (r.status) process.exit(r.status);
   r = spawnSync('python3', [path.join(ROOT, 'tools/train_tinyworld.py'), '--data', dataDir, ...extra], { stdio: 'inherit' });
+  if (r.status) process.exit(r.status);
+  // measure which heads do what and store it in meta.analysis
+  r = spawnSync(process.execPath, [path.join(ROOT, 'tools/analyze-tinyworld.mjs'), '--write-meta'], { stdio: 'inherit' });
   if (r.status) process.exit(r.status);
 }
 

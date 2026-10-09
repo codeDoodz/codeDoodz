@@ -206,11 +206,7 @@ function unitParrot(r) {
   const s = subject(r);
   const n = 2 + r.int(2), said = [];
   for (let k = 0; k < n; k++) said.push(pick(r, COLORS), pick(r, BIND_OBJS));
-  const w = [...s.w, 'said', ...said, '.'];
-  // sometimes something else happens before the parrot speaks, so the copy distance varies
-  // and the words must be found by content (an induction head), not by a fixed offset
-  if (r.next() < 0.5) w.push(...subject(r).w, 'walked', 'to', 'the', pick(r, PLACES), '.');
-  w.push('the', 'parrot', 'said');
+  const w = [...s.w, 'said', ...said, '.', 'the', 'parrot', 'said'];
   const crit = said.map((_, k) => ({ i: w.length + k, type: 'parrot' }));
   w.push(...said, '.');
   return { w, crit };

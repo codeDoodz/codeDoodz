@@ -275,14 +275,18 @@
     function sample(row, o) {
       o = o || {};
       const temp = o.temperature != null ? o.temperature : 1;
-      const rng = o.rng || Math.random;
+      // rng: a () => [0,1) function, or an object with .next() (e.g. AMTensorLib().rng(seed))
+      const rng = typeof o.rng === 'function' ? o.rng
+        : (o.rng && typeof o.rng.next === 'function') ? () => o.rng.next() : Math.random;
       const n = row.length;
       let ids = [];
       for (let i = 0; i < n; i++) if (!banned.has(i) && row[i] > 0) ids.push(i);
       if (!ids.length) return 0;
       ids.sort((a, b) => row[b] - row[a]);
       if (temp <= 1e-6) return ids[0]; // greedy
-      let w = ids.map(i => Math.exp(Math.log(row[i]) / temp));
+      // p^(1/τ), computed relative to the top token so a small τ cannot underflow every weight to 0
+      const lmax = Math.log(row[ids[0]]);
+      let w = ids.map(i => Math.exp((Math.log(row[i]) - lmax) / temp));
       if (o.topK && o.topK > 0 && o.topK < ids.length) { ids = ids.slice(0, o.topK); w = w.slice(0, o.topK); }
       let z = w.reduce((s, x) => s + x, 0);
       if (o.topP != null && o.topP < 1) {

@@ -484,13 +484,31 @@
       let F = Fmax;
       const total = toks.reduce((s, tk) => s + runW(tk, F), 0) + 2 * padX(F);
       if (total > avail) F = clamp(F * (avail / total) * 0.985, Fmin, Fmax);
-      // greedy line wrap at token boundaries
-      const lines = [[]];
-      let lw = 0;
-      for (const tk of toks) {
-        const rw = runW(tk, F);
-        if (lines[lines.length - 1].length && lw + rw > avail - 2 * padX(F)) { lines.push([]); lw = 0; }
-        lines[lines.length - 1].push(tk); lw += rw;
+      // Line wrap between words (a word starts at a token with a leading space), balanced so
+      // the last line is not left with a lone token. A word longer than a line breaks between tokens.
+      const words = [];
+      for (const tk of toks) { if (!words.length || tk.lead) words.push([tk]); else words[words.length - 1].push(tk); }
+      const wordW = words.map((wd) => wd.reduce((a, tk) => a + runW(tk, F), 0));
+      const wrapAt = (limit) => {
+        const out = [[]];
+        let lw = 0;
+        const put = (tk, rw) => {
+          if (out[out.length - 1].length && lw + rw > limit) { out.push([]); lw = 0; }
+          out[out.length - 1].push(tk); lw += rw;
+        };
+        words.forEach((wd, i) => {
+          if (wordW[i] > limit) { for (const tk of wd) put(tk, runW(tk, F)); return; }
+          if (out[out.length - 1].length && lw + wordW[i] > limit) { out.push([]); lw = 0; }
+          out[out.length - 1].push(...wd); lw += wordW[i];
+        });
+        return out;
+      };
+      const maxLine = avail - 2 * padX(F);
+      let lines = wrapAt(maxLine);
+      if (lines.length > 1) {
+        let lo = Math.min(maxLine, Math.max(...wordW)), hi = maxLine;
+        for (let it = 0; it < 16; it++) { const mid = (lo + hi) / 2; if (wrapAt(mid).length <= lines.length) hi = mid; else lo = mid; }
+        lines = wrapAt(hi);
       }
       const lineH = F * 1.5, lineGap = F * 0.34;
       const stripH = lines.length * lineH + (lines.length - 1) * lineGap;
@@ -499,10 +517,13 @@
       let Ft = wide ? 24 : 18;
       const tileGap = wide ? 12 : 8;
       const padL = F * 0.4, tileHL = F * 1.4;
+      // each tile gets a slot at least as wide as the ID stamped under it, so IDs never touch
+      const idFont = FONT.mono(wide ? 13 : 11, 500);
+      const slotW = (tk, s) => Math.max((runW(tk, F) + 2 * padL) * s, tw(String(tk.id), idFont) + (wide ? 6 : 5));
       const tileRows = (ft) => {
         const s = ft / F;
         let rows = 1, x = 0;
-        for (const tk of toks) { const tw_ = (runW(tk, F) + 2 * padL) * s; if (x > 0 && x + tw_ > avail) { rows++; x = 0; } x += tw_ + tileGap; }
+        for (const tk of toks) { const tw_ = slotW(tk, s); if (x > 0 && x + tw_ > avail) { rows++; x = 0; } x += tw_ + tileGap; }
         return rows;
       };
       while (Ft > 13 && tileRows(Ft) > (wide ? 2 : 4)) Ft -= 1;
@@ -516,7 +537,7 @@
         let row = [], x = 0;
         const rows = [];
         for (const tk of toks) {
-          const wT = (runW(tk, F) + 2 * padL) * s;
+          const wT = slotW(tk, s);
           if (row.length && x + wT > avail) { rows.push({ row, width: x - tileGap }); row = []; x = 0; }
           row.push({ tk, wT, x }); x += wT + tileGap;
         }
@@ -918,7 +939,7 @@
       if (phase === 'settled' || (phase === 'fly' && pt > 1.4)) {
         const a = phase === 'settled' ? 1 : clamp((pt - 1.4) / 0.5);
         micro(g, `${nC} characters → ${nT} tokens → ${nT} integers`, L.w / 2, L.wide ? 30 : 26, { align: 'center', color: AM.dye.weld, alpha: a });
-      } else if (phase === 'intact' && struckOnce) {
+      } else if (phase === 'intact' && struckOnce && !(pendingStrike && pendingStrike.auto)) {
         micro(g, 'tap the glass', L.w / 2, L.wide ? 30 : 26, { align: 'center', alpha: 0.8 * glassIn });
       }
       if (phase === 'intact' || phase === 'crack' || phase === 'heal') {
@@ -962,7 +983,8 @@
   }
 
   // =================================================================== 5. stage scenes
-  /* Each scene: {title, layout(w,h), enter(), draw(g, w, h, t, alpha)}; t = seconds since entered. */
+  /* Each scene: {title, rest, layout(w,h), enter(), draw(g, w, h, t, alpha)}; t = seconds since entered.
+     rest = a time at which the scene reads completely; used for the first frame and for reduced motion. */
 
   // ---- Scene 1: characters vs words vs subword tokens
   function sceneGranularity() {
@@ -975,7 +997,7 @@
     const STEP = 0.13;
     let rows = [], L = null;
     const defs = [
-      { label: 'Characters', note: `${chars.length} tokens · vocab 256`, n: chars.length, kind: 'char' },
+      { label: 'Characters (bytes)', note: `${chars.length} tokens · vocab 256`, n: chars.length, kind: 'char' },
       { label: 'Whole words', note: `${words.length} tokens · vocab: every word`, n: words.length, kind: 'word' },
       { label: 'BPE subwords', note: `${bpe.length} tokens · vocab ${256 + BPE.N}`, n: bpe.length, kind: 'bpe' },
     ];
@@ -986,6 +1008,7 @@
     }
     return {
       title: 'Three ways to cut a sentence',
+      rest: chars.length * STEP + 0.9,
       layout(w, h, sc = 1) {
         const wide = w >= 480;
         const m = wide ? 26 : 12;
@@ -1083,6 +1106,7 @@
     }
     return {
       title: 'Byte-pair encoding, learning',
+      rest: K * P + 0.6,
       layout(w, h) {
         const wide = w >= 480;
         const m = wide ? 26 : 12;
@@ -1221,7 +1245,7 @@
       const x0 = w / 2 - (cw * n) / 2;
       const leafY = h - (wide ? 58 : 38);
       const s = wide ? 18 : 13;
-      const tileY = (wide ? 50 : 40) + s * 0.9;
+      const tileY = (wide ? 62 : 54) + s * 0.9;
       const maxLv = Math.max(1, ...T.tr.nodes.map((nd) => nd.level));
       const topNodeY = tileY + s * 0.9 + (wide ? 64 : 44);
       const dy = (leafY - topNodeY) / maxLv;
@@ -1234,7 +1258,9 @@
       return { wide, s, cw, leafY, tileY, pos, F, rootOf, ids, m, fs: wide ? 11 : 9.5 };
     }
     return {
-      title: 'Replaying merges on new words',
+      title: 'Replaying the merges, word by word',
+      // rest: ' looming' (never seen in training) fully replayed, its two tiles in place
+      rest: durOf(traces[0]) + 0.6 + traces[1].tr.steps * EV + 2.0,
       layout(w, h) { L = traces.map((T) => lay(T, w, h)); },
       enter() {},
       draw(g, w, h, t, alpha) {
@@ -1260,7 +1286,12 @@
         const microW = (str) => str.length * Y.fs * 0.74;     // mono advance + letter-spacing
         if (hx + microW(seenTxt) + 18 + microW(outcome) > w - Y.m) outcome = `${nTok} token${nTok > 1 ? 's' : ''}`;
         if (Y.wide) micro(g, outcome, w - Y.m, 20, { align: 'right', color: AM.dye.weld, size: Y.fs });
-        // threads: child → parent, revealed in the order the merges are replayed
+        // threads: child → parent, revealed in the order the merges are replayed.
+        // Piece labels are collected and drawn after every thread, so no strand crosses a label.
+        const tRise = stepT(T.tr.steps) + 0.15;
+        const tp = clamp((tt - tRise - 0.45) / 0.4);
+        const rootSet = new Set(T.tr.roots);
+        const labels = [];
         g.lineCap = 'round';
         for (let i = 0; i < nodes.length; i++) {
           const nd = nodes[i];
@@ -1288,15 +1319,9 @@
             const lab = labelText(nd.id);
             const lw = tw(lab, FONT.mono(Y.fs)) + 10;
             const span = (nd.hi - nd.lo) * Y.cw;
-            if (lw < span + Y.cw * 0.7) {
-              g.save();
-              g.globalAlpha *= clamp(age * 3);
-              D.roundRect(g, P.x - lw / 2, P.y - Y.fs - 16, lw, Y.fs + 9, 5);
-              g.fillStyle = AM.rgba(AM.col.ink, 0.94); g.fill();
-              g.strokeStyle = AM.rgba(col, 0.55); g.lineWidth = 1; g.stroke();
-              monoText(g, lab, P.x, P.y - 11.5 - Y.fs / 2, { size: Y.fs, align: 'center', color: AM.col.linen });
-              g.restore();
-            }
+            // a root's label fades once its finished tile appears above
+            const la = clamp(age * 3) * (rootSet.has(i) ? 1 - tp : 1);
+            if (lw < span + Y.cw * 0.7 && la > 0.01) labels.push({ lab, x: P.x, y: P.y, lw, col, a: la });
           }
         }
         // leaves: the raw bytes
@@ -1313,7 +1338,6 @@
           g.restore();
         });
         // roots rise to the final token tiles, which get their IDs
-        const tRise = stepT(T.tr.steps) + 0.15;
         const rp = clamp((tt - tRise) / 0.6);
         if (rp > 0) {
           T.tr.roots.forEach((ri, k) => {
@@ -1324,12 +1348,20 @@
             g.strokeStyle = AM.rgba(col, 0.82); g.lineWidth = 1.2 + 0.9 * Math.sqrt(nodes[ri].hi - nodes[ri].lo);
             g.beginPath(); g.moveTo(P.x, P.y); cubicTo(g, P.x, P.y, P.x, midY, cx, midY, cx, ty, ease.inOut(rp)); g.stroke();
           });
-          const tp = clamp((tt - tRise - 0.45) / 0.4);
           if (tp > 0) {
             Y.F.items.forEach((it) => drawTile(g, it.id, it.x, Y.tileY, Y.s, { alpha: tp }));
             Y.F.items.forEach((it) => monoText(g, String(it.id), it.x + it.w / 2, Y.tileY - Y.s * 0.9 - 10, { size: Y.wide ? 12 : 10, align: 'center', color: AM.dye.weld, alpha: tp }));
             if (!Y.wide) micro(g, outcome, w - Y.m, 20, { align: 'right', color: AM.dye.weld, size: Y.fs, alpha: tp });
           }
+        }
+        for (const B of labels) {
+          g.save();
+          g.globalAlpha *= B.a;
+          D.roundRect(g, B.x - B.lw / 2, B.y - Y.fs - 16, B.lw, Y.fs + 9, 5);
+          g.fillStyle = AM.rgba(AM.col.ink, 0.96); g.fill();
+          g.strokeStyle = AM.rgba(B.col, 0.55); g.lineWidth = 1; g.stroke();
+          monoText(g, B.lab, B.x, B.y - 11.5 - Y.fs / 2, { size: Y.fs, align: 'center', color: AM.col.linen });
+          g.restore();
         }
         g.restore();
       },
@@ -1346,6 +1378,7 @@
     const CYC = 10.5;
     return {
       title: 'How the model sees “strawberry”',
+      rest: 8.6,
       layout(w, h) {
         const wide = w >= 480;
         const S = Math.min(wide ? 66 : 44, (w - 36) / 6.0);
@@ -1457,22 +1490,26 @@
       { tag: 'Japanese', text: ' 布' },
       { tag: 'Russian', text: ' ткань' },
     ];
-    const mk = (tag, text, mono) => {
-      const ids = BPE.encode(text).map((t) => t.id), chars = charCount(text.trim());
-      return { tag, ids, chars, mono, note: `${chars} char${chars > 1 ? 's' : ''} → ${ids.length} token${ids.length > 1 ? 's' : ''}` };
+    // Each example is tokenized the way it appears mid-sentence, after a space. The space is
+    // counted as a character and drawn in the label, so both sides of "chars → tokens" match.
+    const mk = (tag, text) => {
+      const ids = BPE.encode(text).map((t) => t.id), chars = charCount(text);
+      return { tag, word: text.replace(/ /g, '▁'), ids, chars, note: `${chars} char${chars > 1 ? 's' : ''} → ${ids.length} token${ids.length > 1 ? 's' : ''}` };
     };
-    const numRows = NUMS.map((n) => mk(n.trim(), n, true));
-    const langRows = LANGS.map((l) => mk(`${l.tag} · ${l.text.trim()}`, l.text, false));
+    const numRows = NUMS.map((n) => mk(null, n));
+    const langRows = LANGS.map((l) => mk(l.tag, l.text));
     let L = null;
     return {
       title: 'Numbers and other scripts',
+      rest: 3,
       layout(w, h) {
         const wide = w >= 480;
         const m = wide ? 26 : 12;
         const s = wide ? 16 : 11.5;
         const nfs = wide ? 11 : 9.5;
         const noteW = Math.max(...numRows.map((R) => tw(R.note, FONT.mono(nfs)))) + 12;
-        const labW = wide ? 164 : 50;
+        const numTagW = Math.max(...numRows.map((R) => tw(R.word.replace('▁', 'n'), FONT.mono(12)))) + 10;
+        const labW = wide ? 172 : numTagW;
         let numRowH = wide ? s * 2.75 : s * 2.4;
         let langRowH = wide ? s * 2.75 : s * 2.0 + 19;
         const head = wide ? 26 : 22, secGap = wide ? 38 : 14;
@@ -1498,8 +1535,12 @@
             const ap = clamp((t - delay - i * 0.12) / 0.4);
             g.save(); g.globalAlpha *= ap;
             const noteC = R.ids.length > R.chars ? AM.dye.saffron : AM.dye.weld;
-            const tag = (x, y) => (isLang ? D.text(g, R.tag, x, y + 1, { size: wide ? 14 : 12, weight: 500, baseline: 'middle', color: AM.col.linen })
-              : monoText(g, R.tag, x, y, { size: wide ? 15 : 12, color: AM.col.linen }));
+            const tag = (x, y) => {
+              if (!isLang) return monoText(g, R.word, x, y, { size: wide ? 15 : 12, color: AM.col.linen });
+              const fs = wide ? 14 : 12, head = R.tag + ' · ';
+              D.text(g, head, x, y + 1, { size: fs, weight: 500, baseline: 'middle', color: AM.col.linenDim });
+              return monoText(g, R.word, x + tw(head, FONT.body(fs, 500)), y, { size: fs - 1, color: AM.col.linen });
+            };
             let cy, x, maxX;
             if (wide) {
               cy = rowTop + rowH / 2;
@@ -1525,8 +1566,8 @@
             g.restore();
           });
         };
-        section('Numbers', numRows, L.top, false, 0);
-        section('The word “cloth”', langRows, L.top2, true, 0.5);
+        section('Numbers, each after a space', numRows, L.top, false, 0);
+        section('The word “cloth”, after a space', langRows, L.top2, true, 0.5);
         g.restore();
       },
     };
@@ -1542,7 +1583,8 @@
         return stacked() ? Math.min(w * 0.98, vh * 0.48, 460) : Math.min(w * 0.86, vh * 0.76);
       },
     });
-    let cur = 0, prev = -1, fadeP = 1, tCur = 0, tPrev = 0;
+    // the first scene starts at its resting frame, so the stage is never blank
+    let cur = 0, prev = -1, fadeP = 1, tCur = scenes[0].rest, tPrev = 0;
     const labels = [
       'Three rows compare cutting the sentence into characters, whole words, and BPE subword tokens; gold beads read one token per step.',
       'Byte-pair encoding training on the toy corpus: the most frequent adjacent pair is merged, step by step.',
@@ -1550,13 +1592,14 @@
       'The word strawberry: its letters are packed into two opaque token capsules, leaving only their ID numbers.',
       'How numbers and non-English words are split by the toy tokenizer.',
     ];
-    cv.onResize((w, h) => { for (const s of scenes) s.layout(w, h); });
+    cv.onResize((w, h) => { for (const s of scenes) s.layout(w, h); frame(0); });
     function set(i) {
       if (i === cur || i < 0) return;
       prev = cur; tPrev = tCur; cur = i; tCur = 0; fadeP = 0;
       scenes[cur].enter();
       titleEl.textContent = scenes[cur].title;
       cv.canvas.setAttribute('aria-label', labels[cur]);
+      if (AM.reducedMotion) { fadeP = 1; frame(0); }   // switch at once instead of waiting for a slow tick
     }
     titleEl.textContent = scenes[0].title;
     cv.canvas.setAttribute('aria-label', labels[0]);
@@ -1565,10 +1608,12 @@
       fadeP = Math.min(1, fadeP + dt / 0.45);
       cv.clear();
       const g = cv.g;
-      if (fadeP < 1 && prev >= 0) scenes[prev].draw(g, cv.w, cv.h, tPrev, 1 - ease.inOut(fadeP));
+      // reduced motion: every scene holds still on its resting frame
+      const still = AM.reducedMotion;
+      if (fadeP < 1 && prev >= 0) scenes[prev].draw(g, cv.w, cv.h, still ? scenes[prev].rest : tPrev, 1 - ease.inOut(fadeP));
       g.save();
       g.translate(0, (1 - ease.out(fadeP)) * 10);
-      scenes[cur].draw(g, cv.w, cv.h, tCur, ease.inOut(fadeP));
+      scenes[cur].draw(g, cv.w, cv.h, still ? scenes[cur].rest : tCur, ease.inOut(fadeP));
       g.restore();
     }
     const vis = onScreen(cv.wrap);
@@ -1672,6 +1717,16 @@
       }
       layoutTargets(!!opts.snap);
       if (opts.snap) computeAbs();
+      else {
+        // A token whose glyphs would have to cross to another line does not slide diagonally
+        // over its neighbours: it reappears in place and fades in.
+        const far = G.lineH * 0.5;
+        for (const t of toks) {
+          if (Math.abs(t.P.y - t.Q.y) > far || t.o.some((o) => Math.abs(o.y) > far)) {
+            t.P = { ...t.Q }; t.o = t.f.map((fx) => ({ x: fx, y: 0 })); t.pop = 1;
+          }
+        }
+      }
       // byte → token index, so each stitch can follow the glyph after its seam
       tokOf = new Int32Array(bytes.length);
       toks.forEach((t, i) => { for (let b = t.start; b < t.end; b++) tokOf[b] = i; });
@@ -1686,6 +1741,7 @@
       retokenize(k, { snap: true });
       computeTextCurve();
       if (!fromPreset) presets.set(null);
+      draw(0); drawCurve();
     }
     function computeTextCurve() {
       textCurve = [];
@@ -1718,20 +1774,21 @@
       stats.cpt.textContent = cpt.toFixed(2);
       stats.corpus.textContent = `${BPE.totals[k].toLocaleString('en-US')}`;
       if (!playing) playBtn.textContent = k >= BPE.N ? 'Replay merges' : 'Play merges';
-      cv.canvas.setAttribute('aria-label', `Your text as ${toks.length} tokens after ${k} merges: ${toks.map((t) => labelText(t.id).replace(/▁/g, '(space)')).join(' | ')}`);
+      cv.canvas.setAttribute('aria-label', `Your text as ${toks.length} tokens after ${k} merges: ${toks.map((t) => labelText(t.id).replace(/▁/g, '(space)')).join(' | ')}. Use the arrow keys to inspect each token.`);
       updateInspector();
     }
     function updateInspector() {
       inspector.replaceChildren();
       if (hover < 0 || !toks[hover]) {
-        inspector.append(AM.el('span', { class: 'tk-insp-hint' }, 'Hover or tap a token to inspect it.'));
+        inspector.append(AM.el('span', { class: 'tk-insp-hint' }, 'Hover or tap a token to inspect it, or tab to the tiles and use the arrow keys.'));
         return;
       }
       const id = toks[hover].id;
       const same = toks.filter((t) => t.id === id).length;
       const chip = AM.el('span', { class: 'tk-chip tk-chip-new' }, labelNodes(id));
       if (id < 256) {
-        inspector.append(chip, AM.el('span', {}, ` ID ${id} · a single raw byte (0x${hex2(id)}). IDs 0 to 255 are the bytes themselves.`));
+        const part = id >= 0x80 ? ', one piece of a character that takes several bytes in UTF-8' : '';
+        inspector.append(chip, AM.el('span', {}, ` ID ${id} · a single raw byte (0x${hex2(id)})${part}. In this tokenizer, IDs 0 to 255 are the bytes themselves.`));
       } else {
         const r = BPE.madeBy.get(id), mm = BPE.merges[r];
         inspector.append(chip, AM.el('span', {}, ` ID ${id} · made by merge #${r + 1}: `), AM.el('span', { class: 'tk-chip' }, labelNodes(mm.a)), ' + ',
@@ -1751,6 +1808,23 @@
     cv.canvas.addEventListener('pointermove', (e) => { if (e.pointerType === 'touch') return; const h = tokAt(cv.pointer(e)); if (h !== hover) { hover = h; updateInspector(); } });
     cv.canvas.addEventListener('pointerleave', (e) => { if (e.pointerType === 'touch') return; hover = -1; updateInspector(); });
     cv.canvas.addEventListener('pointerdown', (e) => { const h = tokAt(cv.pointer(e)); hover = h === hover && e.pointerType === 'touch' ? -1 : h; updateInspector(); });
+    // keyboard: focus the canvas, then step through the tokens with the arrow keys
+    cv.canvas.tabIndex = 0;
+    cv.canvas.id = 'tk-ws-tokens';
+    cv.canvas.addEventListener('keydown', (e) => {
+      const n = toks.length;
+      if (!n) return;
+      let h = hover;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') h = hover < 0 ? 0 : Math.min(n - 1, hover + 1);
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') h = hover < 0 ? n - 1 : Math.max(0, hover - 1);
+      else if (e.key === 'Home') h = 0;
+      else if (e.key === 'End') h = n - 1;
+      else if (e.key === 'Escape') h = -1;
+      else return;
+      e.preventDefault();
+      if (h !== hover) { hover = h; updateInspector(); if (AM.reducedMotion) draw(0); }
+    });
+    cv.canvas.addEventListener('blur', () => { if (hover >= 0) { hover = -1; updateInspector(); } });
 
     function step(dt) {
       // play: k grows slowly at first (each early merge is visible), faster later
@@ -1766,6 +1840,7 @@
         t.P.x += (t.Q.x - t.P.x) * aP; t.P.y += (t.Q.y - t.P.y) * aP;
         for (let j = 0; j < t.o.length; j++) { const o = t.o[j]; o.x += (t.f[j] - o.x) * aO; o.y += (0 - o.y) * aO; }
         t.flash = Math.max(0, t.flash - dt * 1.4);
+        if (t.pop) t.pop = Math.max(0, t.pop - dt * 4);
       }
       for (const s of stitches) s.life += dt / 0.95;
       stitches = stitches.filter((s) => s.life < 1);
@@ -1800,7 +1875,9 @@
         const cy = T.P.y;
         const c = tileColors(T.id);
         const hl = Math.max(T.flash, T.id === hid ? 0.9 : 0);
+        const fadeIn = T.pop ? 1 - 0.85 * T.pop : 1;
         g.save();
+        g.globalAlpha = fadeIn;
         if (hl > 0.02) { g.shadowColor = AM.rgba(AM.dye.weld, 0.75 * hl); g.shadowBlur = 14; }
         D.roundRect(g, xL, cy - s * 0.9, Math.max(4, xR - xL), s * 1.8, s * 0.34);
         g.fillStyle = c.fill; g.fill();
@@ -1810,7 +1887,9 @@
         g.stroke();
         if (c.line) { g.fillStyle = AM.rgba(c.line, 0.9); D.roundRect(g, xL + s * 0.35, cy + s * 0.9 - s * 0.22, Math.max(1, xR - xL - s * 0.7), 1.6, 1); g.fill(); }
         g.restore();
+        g.globalAlpha = fadeIn;
         for (let j = 0; j < r.gl.length; j++) drawGlyph(g, r.gl[j], T.P.x + T.o[j].x, cy + T.o[j].y, s, c.text);
+        g.globalAlpha = 1;
       }
       for (const st of stitches) {
         const T = toks[tokOf[st.b]];
@@ -1833,7 +1912,8 @@
       D.text(g, '1.0', l - 6, Y(1) + 3, { size: 9, role: 'mono', align: 'right', color: AM.col.mist });
       D.text(g, '0.5', l - 6, Y(0.5) + 3, { size: 9, role: 'mono', align: 'right', color: AM.col.mist });
       D.text(g, '0', l - 6, Y(0) + 3, { size: 9, role: 'mono', align: 'right', color: AM.col.mist });
-      D.text(g, 'merges →', w - r, h - 6, { size: 9, role: 'mono', align: 'right', color: AM.col.mist });
+      D.text(g, '0', l, h - 6, { size: 9, role: 'mono', align: 'center', color: AM.col.mist });
+      D.text(g, `${BPE.N} merges`, w - r, h - 6, { size: 9, role: 'mono', align: 'right', color: AM.col.mist });
       D.text(g, 'tokens per byte', l + 4, Y(1) - 4 + 0, { size: 9, role: 'mono', color: AM.col.mist });
       const line = (vals, col, width) => {
         g.beginPath();
@@ -1869,12 +1949,18 @@
       }
     }
 
-    cv.onResize(() => { G = geom(cv.w); makeBg(); if (toks.length) layoutTargets(true); else retokenize(k, { snap: true }); stitches = []; });
+    cv.onResize(() => { G = geom(cv.w); makeBg(); if (toks.length) layoutTargets(true); else retokenize(k, { snap: true }); stitches = []; draw(0); });
     curve.onResize(() => drawCurve());
     retokenize(k, { snap: true });
     computeTextCurve();
 
-    slider.input.addEventListener('input', () => { if (playing) setPlaying(false); retokenize(slider.get()); playBtn.textContent = k >= BPE.N ? 'Replay merges' : 'Play merges'; });
+    slider.input.addEventListener('input', () => {
+      played = true;                    // a reader who moves the slider has taken over; no autoplay later
+      if (playing) setPlaying(false);
+      retokenize(slider.get());
+      playBtn.textContent = k >= BPE.N ? 'Replay merges' : 'Play merges';
+      if (AM.reducedMotion) { step(1); draw(0); drawCurve(); }
+    });
     playBtn.addEventListener('click', () => setPlaying(!playing));
     let deb = 0;
     const fit = () => { textarea.style.height = 'auto'; textarea.style.height = textarea.scrollHeight + 2 + 'px'; };
@@ -1899,6 +1985,7 @@
     ${CH} .tk-sp { display: inline-block; width: 0.5em; height: 0.32em; margin: 0 0.06em; border: 1.5px solid var(--weld); border-top: 0; border-radius: 0 0 2px 2px; vertical-align: 0.02em; opacity: 0.9; }
     ${CH} .tk-hex { font-family: var(--font-mono); font-size: 0.72em; padding: 0 0.25em; border: 1px solid color-mix(in srgb, var(--lichen) 55%, transparent); border-radius: 3px; color: var(--linen-dim); margin: 0 0.05em; }
     ${CH} .tk-chip { display: inline-flex; align-items: baseline; justify-content: center; min-width: 1.6em; padding: 0 0.42em; border-radius: 5px; background: var(--ink-3); border: 1px solid var(--rule-strong); font-family: var(--font-body); font-weight: 600; color: var(--linen); white-space: pre; line-height: 1.5; }
+    ${CH} .tk-chip::before { content: '\\200B'; }
     ${CH} .tk-chip-new { border-color: color-mix(in srgb, var(--weld) 55%, var(--rule)); background: color-mix(in srgb, var(--weld) 12%, var(--ink-2)); }
     ${CH} .tk-hero canvas { cursor: pointer; }
     ${CH} .tk-hero-ctl { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
@@ -1906,6 +1993,7 @@
     ${CH} .tk-ids { font-family: var(--font-mono); font-size: 12px; line-height: 1.75; color: var(--linen-dim); overflow-wrap: anywhere; }
     ${CH} .tk-ids .tk-ids-label { color: var(--mist); letter-spacing: 0.12em; text-transform: uppercase; font-size: 10.5px; margin-right: 8px; }
     ${CH} .tk-ids b { font-weight: 500; color: var(--weld); }
+    ${CH} .tk-ids .tk-ids-count { white-space: nowrap; }
     ${CH} .tk-stage-fig .fig-top { min-height: 24px; }
     ${CH} .tk-ws { display: grid; gap: var(--space-4); }
     ${CH} .tk-ws-head { display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-5); align-items: flex-end; justify-content: space-between; }
@@ -1973,8 +2061,8 @@
 
       const renderIds = (toks, txt) => {
         idsLine.replaceChildren(el('span', { class: 'tk-ids-label' }, 'Model input'), '[ ',
-          ...toks.flatMap((t, i) => [el('b', {}, String(t.id)), i < toks.length - 1 ? ', ' : '']), ' ]',
-          el('span', { class: 'tk-ids-label', style: { marginLeft: '12px' } }, `${charCount(txt)} chars · ${toks.length} tokens`));
+          ...toks.flatMap((t, i) => [el('b', {}, String(t.id)), i < toks.length - 1 ? ', ' : '\u00a0]']),
+          el('span', { class: 'tk-ids-label tk-ids-count', style: { marginLeft: '12px' } }, `${charCount(txt)} chars · ${toks.length} tokens`));
       };
       const hero = buildHero(ctx, heroHost, renderIds);
       heroBtn.addEventListener('click', () => { if (heroInput.value.trim() !== hero.text) hero.setText(heroInput.value); else hero.strike(); });
@@ -2002,19 +2090,19 @@
           <p>Use whole words instead and the vocabulary never ends. Any word missing from it, like <em>hummed</em> here, collapses into an unknown <code>[UNK]</code>. <strong>Subword</strong> tokens sit in between: common words stay whole, rare ones are assembled from pieces.</p>` },
         { label: '2 · Learning the pieces', html: `
           <h3>Byte-Pair Encoding: merge the most frequent pair</h3>
-          <p>Start with every word spelled as raw bytes. There are only 256 possible bytes, so nothing is ever unknown. Count every adjacent pair across the corpus, merge the most frequent pair into a new token, and repeat. Each merge adds one entry to the vocabulary.</p>
-          <p>On our story, ${chip(SP)} + ${chip('t')} wins first, then ${chip('h')} + ${chip('e')}, and soon ${chip(SP + 't')} + ${chip('he')} gives ${chip(SP + 'the')} (ID ${idThe}). Training stops when no pair appears twice, after <strong>${BPE.N}</strong> merges.</p>` },
+          <p>Start with every word spelled as raw bytes. There are only 256 possible bytes, so nothing is ever unknown. Count every adjacent pair inside each word, across the whole corpus, then merge the most frequent pair into a new token and repeat. Each merge adds one entry to the vocabulary.</p>
+          <p>On our story, ${chip(SP)} + ${chip('t')} wins first, then ${chip('h')} + ${chip('e')}, and soon ${chip(SP + 't')} + ${chip('he')} gives ${chip(SP + 'the')} (ID ${idThe}). Our tokenizer stops when no pair appears twice, after <strong>${BPE.N}</strong> merges. Real tokenizers keep merging until the vocabulary reaches a chosen size: <span style="white-space:nowrap">GPT-2’s</span> 50,257 is 256 bytes, 50,000 merges and one special end-of-text token.</p>` },
         { label: '3 · Tokenizing new text', html: `
           <h3>Replay the merges, in order</h3>
           <p>Training happens once. To tokenize new text, split it into words, spell each word as bytes, then keep applying the learned merge with the lowest rank (the one learned earliest) until none applies. Each merge here twists two strands into one yarn.</p>
           <p>${chip(SP + 'weavers')} is common enough to end as one token. ${chip(SP + 'looming')} never appeared in the story, so it comes out as ${chip(SP + 'loom')} + ${chip('ing')}, two pieces the model knows well.</p>` },
         { label: '4 · A blind spot', html: `
           <h3>How many r’s are in strawberry?</h3>
-          <p>Chatbots famously stumble on this. They never see the letters. Our toy tokenizer turns ${chip(SP + 'strawberry')} into two IDs, ${strawIds.join(' and ')}; GPT-4’s tokenizer cuts it into three, <em>str · aw · berry</em>.</p>
+          <p>Chatbots famously stumble on this. They never see the letters. Our toy tokenizer turns ${chip(SP + 'strawberry')} into ${strawIds.length === 2 ? 'two' : strawIds.length} IDs, ${strawIds.join(' and ')}. GPT-4’s tokenizer cuts “strawberry”, with no space before it, into three: <em style="white-space:nowrap">str · aw · berry</em>.</p>
           <p>To count letters, a model must have learned the spelling of each token as a separate fact, and then count across pieces. Spelling, rhyming and reversing words are hard for the same reason.</p>` },
         { label: '5 · Rough edges', html: `
           <h3>Odd numbers, expensive languages</h3>
-          <p>Digits are merged wherever the corpus happened to repeat them. The story mentions 1804 twice, so ${chip(SP + '1804')} is a single token, while 1805 becomes ${chip(SP + '180')} + ${chip('5')} and 2025 falls apart into digits. That patchiness is one reason arithmetic is awkward for language models; some tokenizers now split numbers into single digits or fixed groups of three.</p>
+          <p>Digits are merged wherever the corpus happened to repeat them. The story mentions 1804 twice, so ${chip(SP + '1804')} is a single token, while 1805 becomes ${chip(SP + '180')} + ${chip('5')} and 2025 falls apart into digits. That patchiness is one reason arithmetic is awkward for language models; some tokenizers now split numbers into single digits, or into groups of up to three digits.</p>
           <p>Scripts the tokenizer rarely saw fall back to raw bytes: the Japanese 布 costs three tokens for one character. Production tokenizers train on many languages, so the gap is smaller than here, but the same text usually costs more tokens outside English.</p>` },
       ];
       const stepEls = steps.map((s) => el('div', { class: 'step' }, el('div', { class: 'step-label' }, s.label), el('div', { html: s.html, style: { display: 'grid', gap: '12px' } })));
@@ -2045,7 +2133,7 @@
         title: 'The merge loom',
         badge: wsBadge,
         cls: 'tk-ws ch-wide',
-        caption: `Grey tiles are raw bytes (IDs 0 to 255); dyed tiles are learned tokens (IDs from 256 up, in the order they were learned). Our vocabulary is tiny, so even fully trained it averages about ${(BPE.corpusBytes / BPE.totals[BPE.N]).toFixed(1)} characters per token on its own corpus. Real tokenizers, with vocabularies a hundred times larger, average about <strong>4 characters</strong>, or <strong>¾ of an English word</strong>, per token.`,
+        caption: `Grey tiles are raw bytes (IDs 0 to 255); dyed tiles are learned tokens (IDs from 256 up, in the order they were learned). Our vocabulary is tiny, so even fully trained it averages about ${(BPE.corpusBytes / BPE.totals[BPE.N]).toFixed(1)} characters per token on its own corpus. Real tokenizers, with vocabularies a hundred times larger, average about <strong>4 characters</strong>, or <strong>¾ of an English word</strong>, per token. The ID numbers belong to this toy vocabulary; GPT-2 or any other real tokenizer numbers its pieces differently.`,
       },
       el('div', { class: 'tk-ws-head' }, slider.el, playBtn),
       wsCanvasHost,

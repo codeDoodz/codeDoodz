@@ -79,6 +79,10 @@ the model is scored on (the *critical* token) is in brackets.
 | recall *(probe)* | `the red ball and the blue box . alice found the blue [box] .` | colour → noun. **Not learned** (see caveats) |
 | walk *(filler)* | `the princess walked to the market .` | — |
 
+Each binding unit asks one or two questions about different objects; each question is
+a colour question (`the box is [blue]`, scored as *binding*) or, half the time, an object
+question (`alice found the blue [box]`, scored as the *recall* probe).
+
 Unit mix: pronoun 14%, possessive 8%, agreement 12%, binding 22%, copy 10%, parrot 10%,
 capital 7%, sound 6%, colorfact 7%, walk 4%. Vocabulary: 138 tokens (`<pad>`, `<unk>`,
 `.`, `,` and 134 lowercase words; the full list is `m.vocab`).
@@ -179,9 +183,15 @@ greedy reproduces the whole answer).
 | time to ≥ 95% / 99% | 75 steps / 75 steps | 525 steps, 29 s / 1,000 steps, 55 s |
 
 Both are well inside the "≥ 90% within ~60 s" target, and the shipped weights are
-exactly what the Lab produces with seed 1. The test suite also runs the Lab path
-(`createTrainerWorker('sort')`, main-thread fallback) and it reached 91.8% after 218
-steps / 12.7 s.
+exactly what the Lab produces with seed 1 (the Lab's eval batch is 200 examples
+instead of 512, so its curve is slightly noisier). Measured end to end:
+
+- Node, `createTrainerWorker('sort')` main-thread fallback (in the test suite): ≥ 90%
+  after ~220–250 steps, ~13 s of training.
+- Headless Chromium opening the page from `file://`: the blob Worker starts fine
+  (`ctl.inline === false`) and sort reached 90% at step 183 after 9.5 s of training,
+  12.1 s wall clock including the progress snapshots. `run()` on tinyworld took 10.8 ms
+  for 32 tokens with capture, 6.5 ms without (machine shared with other jobs).
 
 What they learn (probe inputs):
 - **reverse**: a perfect anti-diagonal. Output position 8 + j attends to input position
@@ -208,7 +218,9 @@ What they learn (probe inputs):
 - `generate(ids, opts)` returns the **whole** sequence (prompt + new ids) and stops after
   emitting `stopAt` (default `'.'` for tinyworld). `sample()` never emits `<pad>`/`<unk>`;
   `temperature: 0` is greedy; `topP` is nucleus sampling after temperature.
-- `m.meta` holds the accuracies, data description and loss curve for honest captions.
+- `m.meta` holds the accuracies (`meta.test_accuracy`), data description, loss curve and,
+  for tinyworld, `meta.analysis` (top heads per dependency type, logit-lens curves,
+  previous-token scores) for honest captions.
 - Plausible-looking but **unsupported** claims to avoid: the model does not do colour →
   noun lookups (`alice found the blue …` is a coin flip among the listed objects); it has
   no strong general previous-token head (best is ~0.33 on average, L0H3); and the parrot
@@ -225,14 +237,15 @@ ctl.set({lr: 1e-3, delayMs: 200, maxSteps: 5000}); ctl.terminate();
 ```
 
 - `ready`: `{task, config, params, train, probe:{ids, text}}`.
-- `progress`: `{step, loss (EMA), acc (exact-sequence on a fixed 256-example held-out
-  batch), tokenAcc, attn, probePred, probeTarget, lr, elapsed (s of training), stepsPerSec}`.
+- `progress`: `{step, loss (EMA), acc (exact-sequence on a fixed 200-example held-out
+  batch, refreshed every `evalMs` = 500 ms of training), tokenAcc, attn, probePred,
+  probeTarget, lr, elapsed (s spent training), wall (s since start, incl. overhead), stepsPerSec}`.
   `attn[layer][head]` is a `Float32Array(16·16)`, row q, column k (row-major, causal,
   rows sum to 1) for the task's fixed probe (`38152907>…` / `73519273>…`).
 - Options: `seed`, `lr`, `batch`, `config` (override model sizes), `train` (override
   schedule), `maxSteps` (default = schedule length: 600 / 3,000), `reportMs` (default
   150), `chunkMs` (work per slice, default 50), `delayMs` (slow motion: one step per
-  tick), `evalSize`, `inline: true` (force main thread).
+  tick), `evalSize` (200), `evalMs` (500), `inline: true` (force main thread).
 - The worker is built from a Blob of `AMTensorLib.toString() + AMTransformerLib +
   AMTaskLib + AMTrainerMain`. If Workers are unavailable, or the worker errors before it
   says `ready` (some browsers restrict blob workers on `file://`), the same code runs on
@@ -263,9 +276,10 @@ ctl.set({lr: 1e-3, delayMs: 200, maxSteps: 5000}); ctl.terminate();
 ```
 node tools/train.mjs reverse        # ~10 s  → js/model/weights-reverse.js
 node tools/train.mjs sort           # ~3 min → js/model/weights-sort.js
-node tools/train.mjs tinyworld      # corpus → $TMPDIR/attention-loom-data, then numpy, ~25 min
+node tools/train.mjs tinyworld      # corpus → $TMPDIR/attention-loom-data, numpy training (~25 min),
+                                    # then analyze-tinyworld --write-meta (head summary → meta.analysis)
 node tools/test-model.mjs
-node tools/analyze-tinyworld.mjs --md
+node tools/analyze-tinyworld.mjs --md   # the head / logit-lens tables above
 ```
 
 ## 7. Caveats
