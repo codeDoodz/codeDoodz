@@ -96,23 +96,41 @@ function AMTensorLib(opts) {
 
   /* ---------- core ops ---------- */
 
-  // C[n,m] = A[n,k] · B[k,m]   (i-k-j loop order: inner loop walks rows contiguously)
+  // C[n,m] += A[n,k] · B[k,m]. i-k-j order so the inner loop walks rows of B and C
+  // contiguously; k is unrolled by 4 so each C element is loaded/stored 4x less often.
   function matmulInto(C, A, B, n, k, m) {
+    const k4 = k - (k % 4);
     for (let i = 0; i < n; i++) {
       const ci = i * m, ai = i * k;
-      for (let p = 0; p < k; p++) {
-        const a = A[ai + p];
-        if (a === 0) continue;
-        const bp = p * m;
+      let p = 0;
+      for (; p < k4; p += 4) {
+        const a0 = A[ai + p], a1 = A[ai + p + 1], a2 = A[ai + p + 2], a3 = A[ai + p + 3];
+        const b0 = p * m, b1 = b0 + m, b2 = b1 + m, b3 = b2 + m;
+        for (let j = 0; j < m; j++) C[ci + j] += a0 * B[b0 + j] + a1 * B[b1 + j] + a2 * B[b2 + j] + a3 * B[b3 + j];
+      }
+      for (; p < k; p++) {
+        const a = A[ai + p], bp = p * m;
         for (let j = 0; j < m; j++) C[ci + j] += a * B[bp + j];
       }
     }
   }
-  // dA[n,k] += dC[n,m] · B[k,m]^T   (row-by-row dot products)
+  // dA[n,k] += dC[n,m] · B[k,m]ᵀ  (each entry is a dot product of two contiguous rows;
+  // four rows of B share one pass over the dC row)
   function matmulBackA(dA, dC, B, n, k, m) {
+    const k4 = k - (k % 4);
     for (let i = 0; i < n; i++) {
       const ci = i * m, ai = i * k;
-      for (let p = 0; p < k; p++) {
+      let p = 0;
+      for (; p < k4; p += 4) {
+        const b0 = p * m, b1 = b0 + m, b2 = b1 + m, b3 = b2 + m;
+        let s0 = 0, s1 = 0, s2 = 0, s3 = 0;
+        for (let j = 0; j < m; j++) {
+          const g = dC[ci + j];
+          s0 += g * B[b0 + j]; s1 += g * B[b1 + j]; s2 += g * B[b2 + j]; s3 += g * B[b3 + j];
+        }
+        dA[ai + p] += s0; dA[ai + p + 1] += s1; dA[ai + p + 2] += s2; dA[ai + p + 3] += s3;
+      }
+      for (; p < k; p++) {
         const bp = p * m;
         let s = 0;
         for (let j = 0; j < m; j++) s += dC[ci + j] * B[bp + j];
@@ -120,14 +138,23 @@ function AMTensorLib(opts) {
       }
     }
   }
-  // dB[k,m] += A[n,k]^T · dC[n,m]   (rank-1 row updates)
+  // dB[k,m] += A[n,k]ᵀ · dC[n,m]  (rank-1 row updates, four input rows at a time)
   function matmulBackB(dB, A, dC, n, k, m) {
-    for (let i = 0; i < n; i++) {
+    const n4 = n - (n % 4);
+    let i = 0;
+    for (; i < n4; i += 4) {
+      const c0 = i * m, c1 = c0 + m, c2 = c1 + m, c3 = c2 + m;
+      const a0 = i * k, a1 = a0 + k, a2 = a1 + k, a3 = a2 + k;
+      for (let p = 0; p < k; p++) {
+        const x0 = A[a0 + p], x1 = A[a1 + p], x2 = A[a2 + p], x3 = A[a3 + p];
+        const bp = p * m;
+        for (let j = 0; j < m; j++) dB[bp + j] += x0 * dC[c0 + j] + x1 * dC[c1 + j] + x2 * dC[c2 + j] + x3 * dC[c3 + j];
+      }
+    }
+    for (; i < n; i++) {
       const ci = i * m, ai = i * k;
       for (let p = 0; p < k; p++) {
-        const a = A[ai + p];
-        if (a === 0) continue;
-        const bp = p * m;
+        const a = A[ai + p], bp = p * m;
         for (let j = 0; j < m; j++) dB[bp + j] += a * dC[ci + j];
       }
     }
@@ -203,7 +230,7 @@ function AMTensorLib(opts) {
     const th = new F(n); // keep tanh(u) for the backward pass
     for (let i = 0; i < n; i++) {
       const v = x[i];
-      const t = Math.tanh(GELU_C * (v + 0.044715 * v * v * v));
+      const t = 1 - 2 / (Math.exp(2 * GELU_C * (v + 0.044715 * v * v * v)) + 1); // tanh(u), faster than Math.tanh
       th[i] = t;
       y[i] = 0.5 * v * (1 + t);
     }

@@ -28,7 +28,7 @@ function AMTransformerLib(T) {
     const projStd = std / Math.sqrt(2 * L); // GPT-2: shrink residual-branch outputs
     const s = [
       { name: 'wte', shape: [V, d], init: 'normal', std, noDecay: true },
-      { name: 'wpe', shape: [cfg.n_ctx, d], init: 'normal', std, noDecay: true },
+      { name: 'wpe', shape: [cfg.n_ctx, d], init: cfg.pos_init === 'sin' ? 'sin' : 'normal', std, noDecay: true },
     ];
     for (let l = 0; l < L; l++) {
       const p = 'h.' + l + '.';
@@ -83,6 +83,14 @@ function AMTransformerLib(T) {
       const n = sp.shape[0] * sp.shape[1], a = new T.F(n);
       if (sp.init === 'ones') a.fill(1);
       else if (sp.init === 'normal') for (let i = 0; i < n; i++) a[i] = r.normal() * sp.std;
+      else if (sp.init === 'sin') {
+        // learned positions, started from sinusoids (RMS = std): position shifts begin as rotations
+        const d = sp.shape[1];
+        for (let p = 0; p < sp.shape[0]; p++) for (let i = 0; i < d; i++) {
+          const ang = p / Math.pow(10000, (2 * Math.floor(i / 2)) / d);
+          a[p * d + i] = (i % 2 === 0 ? Math.sin(ang) : Math.cos(ang)) * sp.std * Math.SQRT2;
+        }
+      }
       return a;
     });
   }
