@@ -494,9 +494,9 @@ AMTrainerMain(self);
       const sortParams = fmtInt(lib().countParams(lib().init(cfgOf('sort'), 1)));
       const steps = [
         step('1 · Random threads', 'A loom with no pattern',
-          `The picture shows a real transformer: one layer, one attention head, <span class="math">d_model = 24</span>, and <strong>${revParams}</strong> parameters. A moment ago every one of them was drawn at random. The seed is shown under the picture.`,
+          `The picture shows a real transformer: one layer, one attention head, <span class="math">d<sub>model</sub> = 24</span>, and <strong>${revParams}</strong> parameters. A moment ago every one of them was drawn at random. The seed is shown under the picture.`,
           'Its task is tiny. Read eight digits and a <span class="math">&gt;</span>, then write the digits backwards: <span class="math">38152907&gt;70925183</span>. The bottom row is what it would write right now.',
-          'Each thread runs from an answer slot to a token that slot attends to. With random weights every score <span class="math">q·k/√d_head</span> is close to zero, so the softmax spreads attention almost evenly. You see a haze.'),
+          'Each thread runs from an answer slot to a token that slot attends to. With random weights every score <span class="math">q·k/√d<sub>head</sub></span> is close to zero, so the softmax spreads attention almost evenly. You see a haze.'),
         step('2 · Training', 'The same loop, on a toy task',
           'Training is the loop from the last chapter. Each step draws 32 fresh random sequences, predicts every next token, scores the eight answer positions with cross-entropy, backpropagates, and takes one AdamW step.',
           'It is running now, in a background thread of your browser (a Web Worker) if the browser allows one. It runs in slow motion, a few steps a second, so you can watch. The maths is the same at full speed. Use the buttons under the picture to pause, reset or skip ahead.'),

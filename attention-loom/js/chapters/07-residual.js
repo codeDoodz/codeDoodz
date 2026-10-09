@@ -1263,7 +1263,7 @@
 
       const steps = [
         step('1 · The stream', 'One river per token',
-          'After embedding, every token position holds a vector of <span class="math">d_model</span> numbers. Follow the one for <em>crown</em>: the gold light rising from the bottom of the picture.',
+          'After embedding, every token position holds a vector of <span class="math">d<sub>model</sub></span> numbers. Follow the one for <em>crown</em>: the gold light rising from the bottom of the picture.',
           'This vector is the <span class="term">residual stream</span>. It runs unbroken from the embedding to the top of the model, where it is turned into scores for the next token. Every other part of the transformer hangs off it.'),
         step('2 · Read', 'Reading through a LayerNorm gate',
           'A sublayer starts by taking a copy of the stream and passing it through <span class="term">LayerNorm</span>, which rescales the copy to a standard size. The sublayer works on that copy.',

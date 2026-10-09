@@ -430,7 +430,7 @@
           `Before softmax, divide every logit by a <span class="term">temperature</span> T:`,
           `<span class="math block">p<sub>j</sub> ∝ e<sup>z<sub>j</sub> / T</sup></span>`,
           `T = 1 is the model’s own distribution. Below 1 the gaps grow and the favourite takes over; as T → 0 this becomes greedy. Above 1 the distribution flattens: rare words get more chances, so the text gets more surprising and more often wrong. At T = 2 the words outside the top eight get ${b(pct(hotTail))} of the draws.`,
-          `The stage shows the <em>effective number of choices</em>, e<sup>H</sup>, where H is the entropy. A distribution spread evenly over N words scores exactly N. At T = 1 it is ${b(fmt(base.eff, 1))}.`,
+          `The stage shows the <em>effective number of choices</em>, e<sup>H</sup>, where H = −Σ p ln p is the entropy (measured in <em>nats</em> because it uses the natural log). A distribution spread evenly over N words scores exactly N. At T = 1 it is ${b(fmt(base.eff, 1))}.`,
         ],
       },
       {

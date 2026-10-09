@@ -609,7 +609,7 @@
       if (frag) {
         buildFor(frag);
         let target = null; try { target = document.getElementById(decodeURIComponent(frag)); } catch (e) { /* bad escape */ }
-        if (target && target.id !== 'top') target.scrollIntoView({ behavior: 'instant', block: 'start' });
+        if (target && target.id !== 'top') { target.scrollIntoView({ behavior: 'instant', block: 'start' }); requestAnimationFrame(() => AM.settleOn && AM.settleOn(target)); }
       }
       if (pending.length) pumpTimer = setTimeout(pump, 0);
       else allMounted();
@@ -622,6 +622,41 @@
       if (a) buildFor(a.getAttribute('href').slice(1));
     }, true);
     window.addEventListener('hashchange', () => buildFor(location.hash.slice(1)));
+
+    // Some chapters add content the first time they come into view, which can push an
+    // in-page jump's target down after the browser has landed. Once scrolling settles,
+    // re-align on the target for a few seconds, unless the reader takes over.
+    const settleOn = (target) => {
+      if (!target || target.id === 'top') return;
+      let cancelled = false, last = performance.now();
+      const start = last;
+      const user = () => { cancelled = true; };
+      const moved = () => { last = performance.now(); };
+      const evs = ['wheel', 'touchstart', 'keydown'];
+      evs.forEach((e) => window.addEventListener(e, user, { passive: true }));
+      window.addEventListener('scroll', moved, { passive: true });
+      const done = () => { evs.forEach((e) => window.removeEventListener(e, user)); window.removeEventListener('scroll', moved); };
+      const margin = parseFloat(getComputedStyle(target).scrollMarginTop) || 0;
+      const tick = () => {
+        if (cancelled) { done(); return; }
+        const now = performance.now();
+        if (now - last > 140) {
+          const off = target.getBoundingClientRect().top - margin;
+          const room = document.documentElement.scrollHeight - window.innerHeight - window.scrollY;
+          if (Math.abs(off) > 4 && !(off > 0 && room < 2)) { window.scrollTo({ top: window.scrollY + off, behavior: 'instant' }); last = now; }
+        }
+        if (now - start < 3000) requestAnimationFrame(tick); else done();
+      };
+      requestAnimationFrame(tick);
+    };
+    AM.settleOn = settleOn;
+    document.addEventListener('click', (ev) => {
+      const a = ev.target && ev.target.closest ? ev.target.closest('a[href^="#"]') : null;
+      if (!a || ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;
+      let id = a.getAttribute('href').slice(1); try { id = decodeURIComponent(id); } catch (e) { /* keep raw */ }
+      const target = id && document.getElementById(id);
+      if (target) setTimeout(() => settleOn(target), 0);
+    });
 
     // Keyboard focus must not land under a stacked sticky stage (WCAG 2.4.11). The
     // browser does not scroll an element that is inside the viewport, even when the

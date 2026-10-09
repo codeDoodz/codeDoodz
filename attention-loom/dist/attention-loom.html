@@ -1522,7 +1522,7 @@ button, input, select { font: inherit; color: inherit; }
       if (frag) {
         buildFor(frag);
         let target = null; try { target = document.getElementById(decodeURIComponent(frag)); } catch (e) { /* bad escape */ }
-        if (target && target.id !== 'top') target.scrollIntoView({ behavior: 'instant', block: 'start' });
+        if (target && target.id !== 'top') { target.scrollIntoView({ behavior: 'instant', block: 'start' }); requestAnimationFrame(() => AM.settleOn && AM.settleOn(target)); }
       }
       if (pending.length) pumpTimer = setTimeout(pump, 0);
       else allMounted();
@@ -1535,6 +1535,41 @@ button, input, select { font: inherit; color: inherit; }
       if (a) buildFor(a.getAttribute('href').slice(1));
     }, true);
     window.addEventListener('hashchange', () => buildFor(location.hash.slice(1)));
+
+    // Some chapters add content the first time they come into view, which can push an
+    // in-page jump's target down after the browser has landed. Once scrolling settles,
+    // re-align on the target for a few seconds, unless the reader takes over.
+    const settleOn = (target) => {
+      if (!target || target.id === 'top') return;
+      let cancelled = false, last = performance.now();
+      const start = last;
+      const user = () => { cancelled = true; };
+      const moved = () => { last = performance.now(); };
+      const evs = ['wheel', 'touchstart', 'keydown'];
+      evs.forEach((e) => window.addEventListener(e, user, { passive: true }));
+      window.addEventListener('scroll', moved, { passive: true });
+      const done = () => { evs.forEach((e) => window.removeEventListener(e, user)); window.removeEventListener('scroll', moved); };
+      const margin = parseFloat(getComputedStyle(target).scrollMarginTop) || 0;
+      const tick = () => {
+        if (cancelled) { done(); return; }
+        const now = performance.now();
+        if (now - last > 140) {
+          const off = target.getBoundingClientRect().top - margin;
+          const room = document.documentElement.scrollHeight - window.innerHeight - window.scrollY;
+          if (Math.abs(off) > 4 && !(off > 0 && room < 2)) { window.scrollTo({ top: window.scrollY + off, behavior: 'instant' }); last = now; }
+        }
+        if (now - start < 3000) requestAnimationFrame(tick); else done();
+      };
+      requestAnimationFrame(tick);
+    };
+    AM.settleOn = settleOn;
+    document.addEventListener('click', (ev) => {
+      const a = ev.target && ev.target.closest ? ev.target.closest('a[href^="#"]') : null;
+      if (!a || ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;
+      let id = a.getAttribute('href').slice(1); try { id = decodeURIComponent(id); } catch (e) { /* keep raw */ }
+      const target = id && document.getElementById(id);
+      if (target) setTimeout(() => settleOn(target), 0);
+    });
 
     // Keyboard focus must not land under a stacked sticky stage (WCAG 2.4.11). The
     // browser does not scroll an element that is inside the viewport, even when the
@@ -8037,7 +8072,7 @@ if (typeof module !== 'undefined') module.exports = AMTransformerLib;
 
       const steps = [
         step('01 · Lookup', 'One row per token',
-          P('The tokenizer handed us ID numbers. The model swaps each ID for a vector read from a learned table, the <span class="term">embedding matrix</span> <span class="math">E</span>: one row for every token in the vocabulary, <span class="math">d_model</span> columns. Ours is ' + S.N + ' × ' + D + '; blue cells are positive, red negative.'),
+          P('The tokenizer handed us ID numbers. The model swaps each ID for a vector read from a learned table, the <span class="term">embedding matrix</span> <span class="math">E</span>: one row for every token in the vocabulary, <span class="math">d<sub>model</sub></span> columns. Ours is ' + S.N + ' × ' + D + '; blue cells are positive, red negative.'),
           el('p', {}, 'To embed ', span('word', 'em-step-tag', ''), ' (token ', span('id', 'em-step-tag', ''), '), take that row: ',
             el('span', { class: 'math' }, 'x = E[', span('id', '', ''), ']'), '. That is the whole operation. In the math it is often written as a one-hot vector times ', el('span', { class: 'math' }, 'E'), ', which picks out the same row.'),
           el('p', {}, 'Real tables are far bigger. GPT-2 small has 50,257 rows of 768 numbers, 38.6 million in all. GPT-3’s rows hold 12,288. ', liveWidth)),
@@ -16579,7 +16614,7 @@ if (typeof module !== 'undefined') module.exports = AMTransformerLib;
 
       const steps = [
         step('1 · The stream', 'One river per token',
-          'After embedding, every token position holds a vector of <span class="math">d_model</span> numbers. Follow the one for <em>crown</em>: the gold light rising from the bottom of the picture.',
+          'After embedding, every token position holds a vector of <span class="math">d<sub>model</sub></span> numbers. Follow the one for <em>crown</em>: the gold light rising from the bottom of the picture.',
           'This vector is the <span class="term">residual stream</span>. It runs unbroken from the embedding to the top of the model, where it is turned into scores for the next token. Every other part of the transformer hangs off it.'),
         step('2 · Read', 'Reading through a LayerNorm gate',
           'A sublayer starts by taking a copy of the stream and passing it through <span class="term">LayerNorm</span>, which rescales the copy to a standard size. The sublayer works on that copy.',
@@ -19033,7 +19068,7 @@ if (typeof module !== 'undefined') module.exports = AMTransformerLib;
           `Before softmax, divide every logit by a <span class="term">temperature</span> T:`,
           `<span class="math block">p<sub>j</sub> ∝ e<sup>z<sub>j</sub> / T</sup></span>`,
           `T = 1 is the model’s own distribution. Below 1 the gaps grow and the favourite takes over; as T → 0 this becomes greedy. Above 1 the distribution flattens: rare words get more chances, so the text gets more surprising and more often wrong. At T = 2 the words outside the top eight get ${b(pct(hotTail))} of the draws.`,
-          `The stage shows the <em>effective number of choices</em>, e<sup>H</sup>, where H is the entropy. A distribution spread evenly over N words scores exactly N. At T = 1 it is ${b(fmt(base.eff, 1))}.`,
+          `The stage shows the <em>effective number of choices</em>, e<sup>H</sup>, where H = −Σ p ln p is the entropy (measured in <em>nats</em> because it uses the natural log). A distribution spread evenly over N words scores exactly N. At T = 1 it is ${b(fmt(base.eff, 1))}.`,
         ],
       },
       {
@@ -22502,9 +22537,9 @@ AMTrainerMain(self);
       const sortParams = fmtInt(lib().countParams(lib().init(cfgOf('sort'), 1)));
       const steps = [
         step('1 · Random threads', 'A loom with no pattern',
-          `The picture shows a real transformer: one layer, one attention head, <span class="math">d_model = 24</span>, and <strong>${revParams}</strong> parameters. A moment ago every one of them was drawn at random. The seed is shown under the picture.`,
+          `The picture shows a real transformer: one layer, one attention head, <span class="math">d<sub>model</sub> = 24</span>, and <strong>${revParams}</strong> parameters. A moment ago every one of them was drawn at random. The seed is shown under the picture.`,
           'Its task is tiny. Read eight digits and a <span class="math">&gt;</span>, then write the digits backwards: <span class="math">38152907&gt;70925183</span>. The bottom row is what it would write right now.',
-          'Each thread runs from an answer slot to a token that slot attends to. With random weights every score <span class="math">q·k/√d_head</span> is close to zero, so the softmax spreads attention almost evenly. You see a haze.'),
+          'Each thread runs from an answer slot to a token that slot attends to. With random weights every score <span class="math">q·k/√d<sub>head</sub></span> is close to zero, so the softmax spreads attention almost evenly. You see a haze.'),
         step('2 · Training', 'The same loop, on a toy task',
           'Training is the loop from the last chapter. Each step draws 32 fresh random sequences, predicts every next token, scores the eight answer positions with cross-entropy, backpropagates, and takes one AdamW step.',
           'It is running now, in a background thread of your browser (a Web Worker) if the browser allows one. It runs in slow motion, a few steps a second, so you can watch. The maths is the same at full speed. Use the buttons under the picture to pause, reset or skip ahead.'),
@@ -25051,7 +25086,7 @@ AMTrainerMain(self);
   // ================================================================== refinements, left out
   const REFINE = [
     { name: 'RMSNorm', dye: 'woad', ch: 'residual', text: 'LayerNorm without subtracting the mean: divide each vector by its root-mean-square, then multiply by a learned gain. Cheaper, and works about as well.' },
-    { name: 'Rotary position embeddings', dye: 'lichen', ch: 'position', text: 'No position table. Pairs of numbers in each query and key are rotated by angles set by the token’s position, so q·k depends on how far apart two tokens are.' },
+    { name: 'Rotary position embeddings', dye: 'lichen', ch: 'attention', text: 'No position table. Pairs of numbers in each query and key are rotated by angles set by the token’s position, so q·k depends on how far apart two tokens are.' },
     { name: 'SwiGLU MLPs', dye: 'verdigris', ch: 'mlp', text: 'The MLP gets a gate: Swish(x·W₁) multiplies x·V element by element before the down-projection W₂.' },
     { name: 'Grouped-query attention', dye: 'woad', ch: 'heads', text: 'Many query heads share a few key/value heads (128 and 8 in Llama 3.1 405B), which shrinks the KV cache.' },
     { name: 'Mixture of experts', dye: 'verdigris', ch: 'mlp', text: 'Many expert MLPs per layer and a router that sends each token to a few of them. Total parameters grow much faster than the work per token.' },

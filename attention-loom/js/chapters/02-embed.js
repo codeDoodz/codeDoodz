@@ -1389,7 +1389,7 @@
 
       const steps = [
         step('01 · Lookup', 'One row per token',
-          P('The tokenizer handed us ID numbers. The model swaps each ID for a vector read from a learned table, the <span class="term">embedding matrix</span> <span class="math">E</span>: one row for every token in the vocabulary, <span class="math">d_model</span> columns. Ours is ' + S.N + ' × ' + D + '; blue cells are positive, red negative.'),
+          P('The tokenizer handed us ID numbers. The model swaps each ID for a vector read from a learned table, the <span class="term">embedding matrix</span> <span class="math">E</span>: one row for every token in the vocabulary, <span class="math">d<sub>model</sub></span> columns. Ours is ' + S.N + ' × ' + D + '; blue cells are positive, red negative.'),
           el('p', {}, 'To embed ', span('word', 'em-step-tag', ''), ' (token ', span('id', 'em-step-tag', ''), '), take that row: ',
             el('span', { class: 'math' }, 'x = E[', span('id', '', ''), ']'), '. That is the whole operation. In the math it is often written as a one-hot vector times ', el('span', { class: 'math' }, 'E'), ', which picks out the same row.'),
           el('p', {}, 'Real tables are far bigger. GPT-2 small has 50,257 rows of 768 numbers, 38.6 million in all. GPT-3’s rows hold 12,288. ', liveWidth)),

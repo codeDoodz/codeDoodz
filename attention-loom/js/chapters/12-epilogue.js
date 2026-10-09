@@ -1734,7 +1734,7 @@
   // ================================================================== refinements, left out
   const REFINE = [
     { name: 'RMSNorm', dye: 'woad', ch: 'residual', text: 'LayerNorm without subtracting the mean: divide each vector by its root-mean-square, then multiply by a learned gain. Cheaper, and works about as well.' },
-    { name: 'Rotary position embeddings', dye: 'lichen', ch: 'position', text: 'No position table. Pairs of numbers in each query and key are rotated by angles set by the token’s position, so q·k depends on how far apart two tokens are.' },
+    { name: 'Rotary position embeddings', dye: 'lichen', ch: 'attention', text: 'No position table. Pairs of numbers in each query and key are rotated by angles set by the token’s position, so q·k depends on how far apart two tokens are.' },
     { name: 'SwiGLU MLPs', dye: 'verdigris', ch: 'mlp', text: 'The MLP gets a gate: Swish(x·W₁) multiplies x·V element by element before the down-projection W₂.' },
     { name: 'Grouped-query attention', dye: 'woad', ch: 'heads', text: 'Many query heads share a few key/value heads (128 and 8 in Llama 3.1 405B), which shrinks the KV cache.' },
     { name: 'Mixture of experts', dye: 'verdigris', ch: 'mlp', text: 'Many expert MLPs per layer and a router that sends each token to a few of them. Total parameters grow much faster than the work per token.' },
