@@ -124,6 +124,8 @@ AMTrainerMain(self);
     return fake;
   }
 
+  /** On the main thread: short work slices, and the (unsplittable) 200-input accuracy check at most every 0.5 s. */
+  const inlineOpts = (o) => Object.assign({}, o, { chunkMs: 14, evalMs: Math.max(o.evalMs || 0, 500) });
   /** Trainer controller: Web Worker when possible, inline fallback if it dies before 'ready'. */
   function spawnTrainer(task, opts, onMsg) {
     const early = [];
@@ -140,7 +142,7 @@ AMTrainerMain(self);
           if (!ready) {
             try { w.terminate(); } catch (_) { /* already gone */ }
             attach(inlineWorker(), true);
-            early.forEach((m) => w.postMessage(m.type === 'init' ? Object.assign({}, m, { opts: Object.assign({}, m.opts, { chunkMs: 14 }) }) : m));
+            early.forEach((m) => w.postMessage(m.type === 'init' ? Object.assign({}, m, { opts: inlineOpts(m.opts) }) : m));
           } else onMsg({ type: 'error', message: (e && e.message) || 'worker error' });
         };
       }
@@ -153,7 +155,7 @@ AMTrainerMain(self);
     } catch (_) { w = null; }
     if (!w) attach(inlineWorker(), true);
     const send = (m) => { if (dead) return; if (!ready) early.push(m); w.postMessage(m); };
-    send({ type: 'init', task, opts: ctl.inline ? Object.assign({}, opts, { chunkMs: 14 }) : opts });
+    send({ type: 'init', task, opts: ctl.inline ? inlineOpts(opts) : opts });
     ctl.start = () => send({ type: 'start' });
     ctl.pause = () => send({ type: 'pause' });
     ctl.set = (o) => send(Object.assign({ type: 'set' }, o));
@@ -327,7 +329,7 @@ AMTrainerMain(self);
   function loomGeom(x0, x1, y0, y1, phone, opts = {}) {
     const colW = (x1 - x0) / 9;
     const tile = Math.min(colW * 0.74, phone ? 30 : 42);
-    const yTop = y0 + (opts.topPad ?? (phone ? 20 : 26)) + tile / 2;
+    const yTop = y0 + (opts.topPad ?? (phone ? 25 : 34)) + tile / 2; // room above the tiles for per-key weights
     const yBot = y1 - (opts.botPad ?? (phone ? 26 : 34)) - tile / 2;
     return { x0, x1, colW, tile, yTop, yBot, cx: (i) => x0 + (i + 0.5) * colW };
   }
@@ -432,7 +434,7 @@ AMTrainerMain(self);
       const controls = el('div', { class: 'lab-controls' }, btnTrain, btnReset, btnLoad, segSpeed.el, segTask.el, headBox);
 
       const stageHost = el('div');
-      const capText = `Live model: a real transformer training right now in your browser, with the page's own training code. The threads and maps show its attention on one fixed probe input, refreshed several times a second. Each thread runs from an answer slot (bottom row) to a token it attends to (top row; the arcs underneath are attention to answer digits already written). Thread brightness and width follow the attention weight; map colour follows √weight so a faint haze stays visible. Map rows are the 8 answer slots, columns the 16 positions; the dotted corner is masked (no peeking ahead). The number above each map is the share of attention that lands where the algorithm says it should (input 7 − j for reverse, the next larger digit for sort); an even spread scores about ${UNIFORM.reverse.toFixed(2)} for reverse and ${UNIFORM.sort.toFixed(2)} for sort on these probes. The bottom digits are the model's current best guess for each slot, given the correct digits before it: verdigris when right, madder when wrong, with the right digit in small grey. Exact = all 8 digits right, on 200 held-out random inputs. The loss is a running average over training batches, on a log scale.`;
+      const capText = `Live model: a real transformer training right now in your browser, with the page's own training code. The threads and maps show its attention on one fixed probe input, refreshed several times a second. Each thread runs from an answer slot (bottom row) to a token it attends to (top row; the arcs underneath are attention to answer digits already written). Thread brightness and width follow the attention weight; map colour follows √weight so a faint haze stays visible. Map rows are the 8 answer slots, columns the 16 positions; the dotted corner is masked (no peeking ahead). The number above each map is the share of attention that lands where the algorithm says it should (input 7\u00a0−\u00a0j for reverse, the next larger digit for sort); an even spread scores about ${UNIFORM.reverse.toFixed(2)} for reverse and ${UNIFORM.sort.toFixed(2)} for sort on these probes. The bottom digits are the model's current best guess for each slot, given the correct digits before it: verdigris when right, madder when wrong, with the right digit in small grey. Seen = training sequences so far (32 per step). Exact = all 8 digits right, on 200 held-out random inputs. The loss is a running average over training batches, on a log scale. Hover, tap or use the arrow keys on an answer slot to isolate its threads; with sort, tap a map to choose its head.`;
       const figTitle = el('span', { class: 'fig-title' }, 'Training · reverse');
       const stage = el('div', { class: 'ch-stage lab-stage' },
         el('figure', { class: 'fig' },
@@ -455,16 +457,16 @@ AMTrainerMain(self);
           'It is running now, in a background thread of your browser (a Web Worker) if the browser allows one. It runs in slow motion, a few steps a second, so you can watch. The maths is the same at full speed. Use the buttons under the picture to pause, reset or skip ahead.'),
         step('3 · The plateau', 'Ten digits, no idea which',
           `For the first few dozen steps the loss barely moves. It starts near <strong>${Math.log(11).toFixed(2)}</strong>, which is <span class="math">ln 11</span>: an even guess over all eleven tokens. Then it creeps toward <strong>${LN10.toFixed(2)}</strong>, which is <span class="math">ln 10</span> (the dashed line): an even guess over just the ten digits. So far the model has learned that answers are digits, and little else.`,
-          'Underneath, something is moving. Each step tilts every answer slot\'s attention slightly toward one input position. At first the change is too small to see.'),
+          'Underneath, the attention is already shifting a little with every step. At first the change is too small to see.'),
         step('4 · The jump', 'Then it crystallises',
           'Somewhere around step 50 to 75 the haze snaps into a crisp X. Each slot locks onto one input digit, the loss falls off a cliff, and exact-sequence accuracy leaps from 0 to nearly 100% in about ten steps.',
           'Accuracy gets there first, because it only asks that the right digit be the most likely one. The loss keeps falling for hundreds of steps more, as the model grows confident.',
           'Sudden jumps like this are common when a network has to discover a mechanism. Until attention points at the right place, the MLP and the unembedding after it have nothing useful to read, so the loss barely moves. Once it does, everything improves at once.'),
         step('5 · The algorithm', 'Reading the pattern',
-          'The finished pattern is an algorithm you can read off the map. The query at answer slot j puts nearly all its weight, typically around 0.98, on input position <span class="math">7 − j</span>. That digit\'s value vector is copied into the slot, and the unembedding turns it into the prediction.',
-          'Where a slot looks depends almost entirely on position, which is why the same X appears for every input. That information comes from the learned position embeddings: slot j\'s query is trained to match the key of position 7 − j, whatever digit sits there.'),
+          'The finished pattern is an algorithm you can read off the map. The query at answer slot j puts nearly all its weight, typically around 0.98, on input position <span class="math">7\u00a0−\u00a0j</span>. That digit\'s value vector is copied into the slot, and the unembedding turns it into the prediction.',
+          'Where a slot looks depends almost entirely on position, which is why the same X appears for every input. That information comes from the learned position embeddings: slot j\'s query is trained to match the key of position 7\u00a0−\u00a0j, whatever digit sits there.'),
         step('6 · Sorting', 'A harder pattern',
-          `Now the stage is sorting: <span class="math">73519273&gt;12335779</span>. This model has two layers with two heads each and ${sortParams} parameters. It needs a few hundred steps to reach 90% exact, and the climb is gradual.`,
+          `Sorting is harder: <span class="math">73519273&gt;12335779</span>. The stage switches to it here, unless you have taken the controls (then pick Sort). This model has two layers with two heads each and ${sortParams} parameters. It needs a few hundred steps to reach 90% exact, and the climb is gradual.`,
           'Watch the first-layer maps. One head picks up a rule: from the digit just written, look for the smallest input digit that is larger. On this probe that means: after <span class="math">&gt;</span> look at the 1, after the 1 look at the 2, after the 5 look at both 7s. Which head takes the job depends on the random start; its score is printed above each map.',
           'This head is a soft pointer. On random inputs, the shipped model\'s head puts 36% of its weight on that digit, about three times an even spread. The rest of the network finishes the job.'),
       ];
@@ -508,7 +510,7 @@ AMTrainerMain(self);
         D.roundRect(g, L.x0 + 0.5, L.y0 + 0.5, L.x1 - L.x0 - 1, L.y1 - L.y0 - 1, 12);
         g.stroke();
       }
-      cv.onResize((w) => { lay = stageLayout(w); buildBg(); particles.length = 0; drawStage(S.nowT, 0); });
+      cv.onResize((w) => { lay = stageLayout(w); buildBg(); particles.length = 0; S.statsDirty = true; drawStage(S.nowT, 0); });
 
       // smoothed display copy of the attention, so snapshots blend instead of jumping
       function smoothAttn(r, target, dt) {
@@ -531,10 +533,10 @@ AMTrainerMain(self);
         const flare = age >= 0 && age < 2.2 ? Math.pow(1 - age / 2.2, 2) : 0;
 
         // labels
-        D.text(g, 'INPUT', G.x0 + 4, L.y0 + (phone ? 12 : 15), { size: phone ? 8 : 9, role: 'mono', color: AM.col.mist, letterSpacing: '0.14em' });
-        D.text(g, `L${l} · H${hh}`, G.x1 - 4, L.y0 + (phone ? 12 : 15), { size: phone ? 8 : 9, role: 'mono', color: dye, align: 'right', letterSpacing: '0.1em' });
+        D.text(g, 'INPUT', G.x0 + 4, L.y0 + (phone ? 11 : 14), { size: phone ? 8 : 9, role: 'mono', color: AM.col.mist, letterSpacing: '0.14em' });
+        D.text(g, `L${l} · H${hh}`, G.x1 - 4, L.y0 + (phone ? 11 : 14), { size: phone ? 8 : 9, role: 'mono', color: dye, align: 'right', letterSpacing: '0.1em' });
         const ax = G.cx(8);
-        D.text(g, 'ANSWER', ax, G.yBot - 3, { size: phone ? 8 : 9, role: 'mono', color: AM.col.mist, align: 'center', letterSpacing: '0.12em' });
+        D.text(g, 'ANSWER', ax, G.yBot - 3, { size: phone ? 8 : 9, role: 'mono', color: AM.col.mist, align: 'center', letterSpacing: phone ? '0.02em' : '0.12em', maxWidth: G.colW - 2 });
         D.text(g, v.shipped ? 'shipped' : phone ? 'now' : 'right now', ax, G.yBot + (phone ? 9 : 11), { size: phone ? 8 : 9, role: 'mono', color: v.shipped ? AM.dye.weld : AM.col.mist, align: 'center' });
 
         // threads, additive so overlaps glow like silk
@@ -694,11 +696,11 @@ AMTrainerMain(self);
         const hist = v.hist;
         const last = hist.length ? hist[hist.length - 1].s : 0;
         const minX = r.task === 'reverse' ? 150 : 400;
-        const want = NICE.find((n) => n >= Math.max(minX, v.shipped ? last : last * 1.08)) || Math.ceil(last / 1000) * 1000;
-        if (r.xMax == null || dt === 0 || AM.reducedMotion) r.xMax = want; else r.xMax += (want - r.xMax) * (1 - Math.exp(-dt * 4));
+        const want = NICE.find((n) => n >= Math.max(minX, v.shipped || r.done ? last : last * 1.08)) || Math.ceil(last / 1000) * 1000;
+        if (r.xMax == null || dt === 0 || AM.reducedMotion || Math.abs(want - r.xMax) < 1) r.xMax = want; else r.xMax += (want - r.xMax) * (1 - Math.exp(-dt * 4));
         const xMax = r.xMax;
         const X = (s) => px0 + (s / xMax) * (px1 - px0);
-        const LTOP = Math.log10(3.5), LBOT = -3;
+        const LTOP = Math.log10(6), LBOT = -3; // headroom keeps the ln 10 line clear of the 100% line
         const Y = (L) => py0 + (LTOP - Math.log10(MM.clamp(L, 1e-3, 3.5))) / (LTOP - LBOT) * (py1 - py0);
         const YA = (a) => py1 - a * (py1 - py0);
 
@@ -736,7 +738,7 @@ AMTrainerMain(self);
           const lab = `90% @ ${fmtInt(h90)}`;
           const tw = D.measure(g, lab, fs, 'mono');
           const right = x + 5 + tw < px1;
-          D.text(g, lab, right ? x + 5 : x - 5, py0 + (py1 - py0) * 0.62, { size: fs, role: 'mono', color: AM.dye.verdigris, align: right ? 'left' : 'right' });
+          D.text(g, lab, right ? x + 5 : x - 5, py0 + (py1 - py0) * 0.84, { size: fs, role: 'mono', color: AM.dye.verdigris, align: right ? 'left' : 'right' });
         }
 
         if (!hist.length) return;
@@ -811,12 +813,15 @@ AMTrainerMain(self);
       };
       cv.canvas.addEventListener('pointermove', (e) => { if (e.pointerType === 'mouse') S.focus = slotAt(cv.pointer(e)); });
       cv.canvas.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') S.focus = -1; });
-      cv.canvas.addEventListener('pointerdown', (e) => {
+      // 'click' (not pointerdown) so a finger that starts a scroll on the canvas changes nothing
+      let lastPointer = 'mouse';
+      cv.canvas.addEventListener('pointerdown', (e) => { lastPointer = e.pointerType || 'mouse'; });
+      cv.canvas.addEventListener('click', (e) => {
         const p = cv.pointer(e);
         const hit = mapRects.find((m) => p.x >= m.x && p.x <= m.x + m.w && p.y >= m.y && p.y <= m.y + m.h);
         if (hit && cfgOf(S.task).n_head > 1) { touch(); S.head.sort = hit.idx; S.headManual.sort = true; segHead.set(hit.idx); particles.length = 0; return; }
         const j = slotAt(p);
-        if (e.pointerType !== 'mouse') S.focus = j === S.focus ? -1 : j;
+        if (lastPointer !== 'mouse') S.focus = j === S.focus ? -1 : j;
       });
       cv.canvas.addEventListener('keydown', (e) => {
         if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
@@ -972,7 +977,7 @@ AMTrainerMain(self);
         if (v.shipped) {
           meta.innerHTML = `<span class="is-shipped">Shipped weights</span> · <b>${fmtInt(v.params || r.params)}</b> parameters · trained offline with this same code, seed ${v.seed ?? 1} · tested on ${fmtInt(v.testN || 10000)} inputs`;
         } else {
-          const where = !r.ctl ? 'press Train' : r.inline ? 'training on the main thread' : 'training in a Web Worker';
+          const where = !r.ctl ? 'press Train' : lay.phone ? (r.inline ? 'main thread' : 'Web Worker') : r.inline ? 'training on the main thread' : 'training in a Web Worker';
           meta.innerHTML = `<b>${fmtInt(r.params)}</b> parameters · seed <b>${r.seed}</b> · ${where}${r.done ? ' · finished' : ''}`;
         }
       }
@@ -1021,13 +1026,13 @@ AMTrainerMain(self);
           el('span', { class: 'lab-kicker' }, 'Test bench'),
           el('h3', { id: 'lab-bench-h' }, 'Ask your model'),
           el('p', { html: 'Type any eight digits or roll random ones. The model writes its answer one digit at a time, feeding each digit back in, the same way a chatbot generates text. The bar under each digit is the probability it gave that digit. Verdigris digits are right, madder ones wrong.' }),
-          el('p', { html: 'Try it before training, halfway through and after. It keeps updating while the model above trains. On sorting, watch the two accuracies: per digit reaches 90% long before exact does, because all eight digits must be right, and <span class="math">0.9⁸ ≈ 0.43</span>.' })),
+          el('p', { html: 'Try it before training, halfway through and after. It keeps updating while the model above trains. On sorting, compare the two accuracies in the readout above the picture, or run the stress test: per digit reaches 90% long before exact does, because all eight digits must be right at once, and <span class="math">0.9⁸ ≈ 0.43</span>.' })),
         el('div', { class: 'panel' }, benchFig),
         el('div', { class: 'prose' },
           el('p', { html: 'Eight random digits have 10⁸ possible values. The model sees 32 sequences per step, so after the 600 steps of the reverse schedule it has met 19,200 of them, about 0.02%. Nearly every input you type is new to it, and once trained it still gets them right. What it learned is the rule itself.' }),
           el('p', { class: 'lab-limits', html: '<strong>Honest limits.</strong> These models only know sequences of exactly eight digits followed by <span class="math">&gt;</span>. They have 16 learned positions and nothing beyond them, so a seven- or nine-digit input means nothing to them, and the bench only accepts eight. A large language model has the same kind of edge at the end of its context window, just much further out.' }))));
 
-      const benchCv = ctx.canvas(benchHost, { height: (w) => (isPhone(w) ? 214 : 250), label: 'Test bench: your input digits on top, the model\'s answer below with a confidence bar under each digit, and threads showing where it looked while writing each one.' });
+      const benchCv = ctx.canvas(benchHost, { height: (w) => (isPhone(w) ? 224 : 262), label: 'Test bench: your input digits on top, the model\'s answer below with a confidence bar under each digit, and threads showing where it looked while writing each one.' });
       benchCv.canvas.tabIndex = 0;
 
       const bench = (() => {
@@ -1039,6 +1044,8 @@ AMTrainerMain(self);
         };
         const target = () => TASKLIB.TASKS[S.task].fn(B.digits);
         function compute(animate) {
+          // announce answers the visitor asked for, not the once-a-second refresh during training
+          benchRead.setAttribute('aria-live', animate ? 'polite' : 'off');
           if (B.digits.length !== LEN) { B.res = null; renderRead(); return; }
           const { net, key, label } = curNet();
           B.netKey = key; B.label = label;
@@ -1052,14 +1059,14 @@ AMTrainerMain(self);
           const want = target();
           let right = 0, minP = 1;
           const ans = B.res.map((o, j) => { if (o.id === want[j]) right++; minP = Math.min(minP, o.p); return `<span class="${o.id === want[j] ? 'ok' : 'bad'}">${VOCAB[o.id]}</span>`; }).join('');
-          benchRead.innerHTML = `<span class="lab-k">Answer · ${B.label}</span><span class="lab-ans">${ans}</span><span><b class="${right === LEN ? 'ok' : 'bad'}">${right} of 8</b> digits right · lowest confidence <b>${pct(minP)}</b></span><span class="lab-want">correct answer ${want.join('')}</span>`;
+          benchRead.innerHTML = `<span class="lab-k">Answer · ${B.label}</span><span class="lab-ans">${ans}</span><span><b class="${right === LEN ? 'ok' : 'bad'}">${right} of 8</b> digits right</span><span>lowest confidence <b>${pct(minP)}</b></span><span class="lab-want">correct answer ${want.join('')}</span>`;
         }
         function frame(t, dt) {
           const { g, w, h } = benchCv;
           if (!w) return;
           benchCv.clear();
           const phone = isPhone(w);
-          const G = loomGeom(4, w - 4, 0, h, phone, { topPad: phone ? 22 : 26, botPad: phone ? 46 : 52 });
+          const G = loomGeom(4, w - 4, 0, h, phone, { topPad: phone ? 31 : 37, botPad: phone ? 46 : 52 });
           D.roundRect(g, 1, 1, w - 2, h - 2, 12);
           g.fillStyle = AM.rgba(AM.col.ink, 0.35); g.fill();
           D.text(g, 'INPUT', G.x0 + 4, phone ? 13 : 15, { size: phone ? 8 : 9, role: 'mono', color: AM.col.mist, letterSpacing: '0.14em' });
@@ -1106,7 +1113,7 @@ AMTrainerMain(self);
             tile(g, G.cx(k), G.yTop, G.tile, ch, { color: k === LEN ? AM.col.mist : AM.col.linen, stroke: a > 0.3 ? dye : AM.col.ruleStrong, glow: a > 0.3 ? a * 0.7 : 0, glowColor: dye });
             if (fr && a > 0.02) D.text(g, a.toFixed(2), G.cx(k), G.yTop - G.tile / 2 - 4, { size: phone ? 8 : 9, role: 'mono', color: dye, align: 'center' });
           }
-          D.text(g, 'ANSWER', G.cx(8), G.yBot + 3, { size: phone ? 8 : 9, role: 'mono', color: AM.col.mist, align: 'center', letterSpacing: '0.12em' });
+          D.text(g, 'ANSWER', G.cx(8), G.yBot + 3, { size: phone ? 8 : 9, role: 'mono', color: AM.col.mist, align: 'center', letterSpacing: phone ? '0.02em' : '0.12em', maxWidth: G.colW - 2 });
           // answer row with confidence bars
           for (let j = 0; j < LEN; j++) {
             const x = G.cx(j);
@@ -1139,7 +1146,14 @@ AMTrainerMain(self);
         };
         benchCv.canvas.addEventListener('pointermove', (e) => { if (e.pointerType === 'mouse') B.focus = slotAtB(benchCv.pointer(e)); });
         benchCv.canvas.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') B.focus = -1; });
-        benchCv.canvas.addEventListener('pointerdown', (e) => { if (e.pointerType !== 'mouse') { const j = slotAtB(benchCv.pointer(e)); B.focus = j === B.focus ? -1 : j; } });
+        let lastPointerB = 'mouse';
+        benchCv.canvas.addEventListener('pointerdown', (e) => { lastPointerB = e.pointerType || 'mouse'; });
+        benchCv.canvas.addEventListener('click', (e) => {
+          if (lastPointerB === 'mouse') return;
+          const j = slotAtB(benchCv.pointer(e));
+          B.focus = j === B.focus ? -1 : j;
+          if (!benchVis.on) frame(S.nowT, 0);
+        });
         benchCv.canvas.addEventListener('keydown', (e) => {
           if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
             e.preventDefault();
@@ -1209,7 +1223,7 @@ AMTrainerMain(self);
       // ================================================================ key idea
       body0.appendChild(el('div', { class: 'callout' },
         el('span', { class: 'callout-label' }, 'Key idea'),
-        el('p', { html: 'Nobody wrote the algorithm. Starting from random numbers, the same next-token training loop found attention patterns that implement one: <strong>look at position 7 − j</strong> to reverse, <strong>look for the next larger digit</strong> to sort. Interpretability research reads trained models the same way, head by head, though in large models the patterns are far harder to read.' })));
+        el('p', { html: 'Nobody wrote the algorithm. Starting from random numbers, the same next-token training loop found attention patterns you can read as steps of one: <strong>look at position 7\u00a0−\u00a0j</strong> to reverse, <strong>lean toward the next larger digit</strong> to sort. Interpretability research reads trained models the same way, head by head, though in large models the patterns are far harder to read.' })));
 
       // resting frame
       bench.onTask();

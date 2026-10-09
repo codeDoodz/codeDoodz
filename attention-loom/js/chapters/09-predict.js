@@ -285,7 +285,7 @@
     #ch-predict .pr-tw.is-prompt { color: var(--mist); }
     #ch-predict .pr-tw.is-gen .pr-tw-word { color: var(--linen); font-weight: 600; border-bottom: 2px solid color-mix(in srgb, var(--weld) 70%, transparent); }
     #ch-predict .pr-tw.is-new .pr-tw-word { color: var(--weld); }
-    #ch-predict .pr-tw-alts { display: grid; gap: 0; font-family: var(--font-mono); font-size: 9.5px; line-height: 1.45; color: color-mix(in srgb, var(--mist) 70%, transparent); white-space: nowrap; }
+    #ch-predict .pr-tw-alts { display: grid; gap: 0; font-family: var(--font-mono); font-size: 9.5px; line-height: 1.45; color: var(--mist); white-space: nowrap; }
     #ch-predict .pr-tw-alts .is-pick { color: var(--weld); }
     #ch-predict .pr-tw-alts .is-other { color: var(--madder); }
     #ch-predict .pr-full { font-family: var(--font-mono); font-size: var(--fs-micro); letter-spacing: 0.08em; text-transform: uppercase; color: var(--weld); align-self: center; }
@@ -377,9 +377,13 @@
     stage.appendChild(fig);
     const cv = ctx.canvas(fig, {
       label: `The live model reads “${STORY}”. Its final vector at “${lastTok}” is normalised and multiplied by the unembedding matrix, giving ${V} logits; softmax turns them into probabilities, led by ${word(0)} ${pct(base.q[0])}, ${word(1)} ${pct(base.q[1])} and ${word(2)} ${pct(base.q[2])}.`,
-      height: (w) => (w < 520
-        ? Math.round(Math.min(Math.max(330, w * 0.98), 400, Math.max(320, window.innerHeight * 0.47)))
-        : Math.round(Math.min(Math.max(480, w * 0.9), 590, Math.max(460, window.innerHeight * 0.7)))),
+      height: (w) => {
+        const vh = window.innerHeight;
+        if (w < 520) return Math.round(Math.min(Math.max(330, w * 0.98), 400, Math.max(320, vh * 0.47)));
+        // stacked layout (tablets): the stage is sticky above the text, so keep it to about half the screen
+        if (window.innerWidth <= 900) return Math.round(clamp(Math.min(w * 0.75, vh * 0.5), 340, 520));
+        return Math.round(Math.min(Math.max(480, w * 0.9), 590, Math.max(460, vh * 0.7)));
+      },
     });
     fig.appendChild(el('figcaption', { class: 'pr-stage-cap', html: `Live model: the residual vector, the real ${d}×${V} unembedding matrix W<sub>U</sub> (blue positive, red negative), and the ${V} logits and probabilities it produces for this sentence. The draws use the same sampling rule as the model’s own sampler.` }));
 
@@ -391,7 +395,7 @@
         label: '1 · The last vector',
         html: [
           `After the last block, every position holds a vector of d<sub>model</sub> = ${d} numbers. To guess the word after “${lastTok}”, only the vector at the last position is needed.`,
-          `It goes through one final LayerNorm, LN<sub>f</sub>: subtract the mean, divide by the standard deviation, then apply a learned scale γ and shift β to each dimension. The live vector has length ${b(fmt(xN, 1))}; after LN<sub>f</sub> it has length ${b(fmt(hN, 1))}.`,
+          `It goes through one final LayerNorm, LN<sub>f</sub>: subtract the mean μ, divide by the standard deviation σ (a tiny ε = 10<sup>−5</sup> keeps it from dividing by zero), then apply a learned scale γ and shift β to each dimension. The live vector has length ${b(fmt(xN, 1))}; after LN<sub>f</sub> it has length ${b(fmt(hN, 1))}.`,
           `In training, every position predicts its own next word at the same time. When generating, only the last one matters.`,
         ],
       },
@@ -425,7 +429,7 @@
         html: [
           `Before softmax, divide every logit by a <span class="term">temperature</span> T:`,
           `<span class="math block">p<sub>j</sub> ∝ e<sup>z<sub>j</sub> / T</sup></span>`,
-          `T = 1 is the model’s own distribution. Below 1 the gaps grow and the favourite takes over; as T → 0 this becomes greedy. Above 1 the distribution flattens: rare words get more chances, so the text gets more surprising and more often wrong. At T = 2 the ${hot.n - 8} words outside the top eight get ${b(pct(hotTail))} of the draws.`,
+          `T = 1 is the model’s own distribution. Below 1 the gaps grow and the favourite takes over; as T → 0 this becomes greedy. Above 1 the distribution flattens: rare words get more chances, so the text gets more surprising and more often wrong. At T = 2 the words outside the top eight get ${b(pct(hotTail))} of the draws.`,
           `The stage shows the <em>effective number of choices</em>, e<sup>H</sup>, where H is the entropy. A distribution spread evenly over N words scores exactly N. At T = 1 it is ${b(fmt(base.eff, 1))}.`,
         ],
       },
@@ -685,7 +689,8 @@
       }
       S.cur = target;
       const qk = step === 4 ? 1 : 1 - Math.exp(-dt * (AM.reducedMotion ? 60 : 6));
-      for (let r = 0; r < S.qDisp.length; r++) S.qDisp[r] += (target.q[r] - S.qDisp[r]) * qk;
+      let lag = 0;
+      for (let r = 0; r < S.qDisp.length; r++) { S.qDisp[r] += (target.q[r] - S.qDisp[r]) * qk; lag = Math.max(lag, Math.abs(target.q[r] - S.qDisp[r])); }
 
       cv.clear();
       const L = layout(w, h);
@@ -824,6 +829,11 @@
           g.beginPath(); g.moveTo(L.left, base0); g.lineTo(L.right, base0); g.stroke();
           g.restore();
         }
+        // x axis: until the bars are sorted, the columns are the vocabulary in id order
+        {
+          const aX = eF * (1 - eS) * (step === 1 ? clamp(sweep * 3) : 1);
+          if (aX > 0.01) haloText(g, L.phone ? 'vocab order →' : 'vocabulary order →', L.left, fieldBot + (L.phone ? 6 : 9), { size: L.phone ? 8 : 9.5, align: 'left', color: AM.col.mist, alpha: aX, halo: false });
+        }
 
         // columns
         const clothBot = L.cloth.y + L.cloth.h;
@@ -910,6 +920,17 @@
         const size = L.phone ? 9 : 11;
         g.save();
         g.globalAlpha *= a;
+        // temperature: the T = 1 heights stay as dashed ghosts for comparison (drawn under the labels)
+        if (step === 4) {
+          g.save();
+          g.strokeStyle = AM.rgba(AM.col.linen, 0.55); g.lineWidth = 1; g.setLineDash([3, 3]);
+          for (let r = 0; r < ntop; r++) {
+            const x = sortX(r), bw = sortBW(r) + 8;
+            const y = barBase - (barBase - barTop) * base.q[r];
+            g.beginPath(); g.moveTo(x - bw / 2, y); g.lineTo(x + bw / 2, y); g.stroke();
+          }
+          g.restore();
+        }
         // names under the top bars + percentages above
         for (let r = 0; r < ntop; r++) {
           const x = sortX(r);
@@ -961,17 +982,6 @@
           const my = (y1 + y2) / 2;
           silk(g, [x1, y1, x1, my, x2, my, x2, y2], { color: rankColor(r), width: 0.6 + 1.6 * Math.sqrt(q), alpha: 0.55 });
         }
-        // temperature: the T = 1 heights stay as dashed ghosts for comparison
-        if (step === 4) {
-          g.save();
-          g.strokeStyle = AM.rgba(AM.col.linen, 0.55); g.lineWidth = 1; g.setLineDash([3, 3]);
-          for (let r = 0; r < ntop; r++) {
-            const x = sortX(r), bw = sortBW(r) + 8;
-            const y = barBase - (barBase - barTop) * base.q[r];
-            g.beginPath(); g.moveTo(x - bw / 2, y); g.lineTo(x + bw / 2, y); g.stroke();
-          }
-          g.restore();
-        }
         // greedy marker (step 3)
         if (step === 3) {
           const x = sortX(0), yS = barBase - (barBase - barTop) * S.qDisp[0];
@@ -1000,23 +1010,29 @@
 
         // ---- a draw every few seconds: u falls onto the ribbon, the word flies into the sentence
         if (step >= 3 && a > 0.5) {
-          if (!S.drop && t >= S.nextDrop) S.drop = { t0: t, u: S.rng(), r: -1 };
+          // a new draw only starts once the bars have settled, so it uses exactly the distribution shown
+          if (!S.drop && t >= S.nextDrop && lag < 0.002) S.drop = { t0: t, u: S.rng(), r: -1 };
           const dp = S.drop;
           if (dp) {
-            const FALL = AM.reducedMotion ? 0.01 : 0.55, HOLD = AM.reducedMotion ? 0.6 : 0.5, FLY = AM.reducedMotion ? 0.01 : 0.65;
+            const FALL = AM.reducedMotion ? 0.01 : 0.55, HOLD = AM.reducedMotion ? 0.6 : 0.85, FLY = AM.reducedMotion ? 0.01 : 0.65;
             const el2 = t - dp.t0;
             const xu = rb.x + dp.u * rb.w;
             if (el2 >= FALL && dp.r < 0) {
               // decide at landing, from the ribbon as drawn
-              let acc2 = 0, rr = 0;
-              for (let r = 0; r < S.qDisp.length; r++) { acc2 += S.qDisp[r]; if (dp.u < acc2) { rr = r; break; } rr = r; }
-              dp.r = rr;
+              let acc2 = 0, rr = -1, lastLive = 0;
+              for (let r = 0; r < S.qDisp.length; r++) {
+                if (S.qDisp[r] > 1e-9) lastLive = r;
+                acc2 += S.qDisp[r];
+                if (dp.u < acc2) { rr = r; break; }
+              }
+              dp.r = rr >= 0 ? rr : lastLive; // rounding can leave u past the end: take the last word still in play
             }
             if (el2 < FALL) {
               const f = M.ease.in(el2 / FALL);
               const y = lerp(rb.y - (L.phone ? 34 : 48), rb.y + rb.h / 2, f);
               D.glowDot(g, xu, y, L.phone ? 3 : 3.6, AM.col.linen, 1);
-              haloText(g, `u = ${dp.u.toFixed(3)}`, xu, rb.y - (L.phone ? 44 : 60), { size: L.phone ? 8.5 : 10, color: AM.col.linen, alpha: 0.9 });
+              // same spot as the landing readout, below the word labels, so the two rows never collide
+              haloText(g, `u = ${dp.u.toFixed(3)}`, clamp(xu, L.left + 60, L.right - 60), rb.y - (L.phone ? 14 : 18), { size: L.phone ? 8.5 : 10, color: AM.col.linen, alpha: 0.9 });
             } else if (dp.r >= 0) {
               // highlight the chosen segment
               let x0 = rb.x; for (let r = 0; r < dp.r; r++) x0 += S.qDisp[r] * rb.w;
@@ -1028,8 +1044,9 @@
               g.strokeRect(x0, rb.y - 1, Math.max(2, x1 - x0), rb.h + 2);
               g.restore();
               D.glowDot(g, xu, rb.y + rb.h / 2, L.phone ? 3 : 3.6, AM.col.linen, fl);
-              haloText(g, `u = ${dp.u.toFixed(3)} → ${m.vocab[base.order[dp.r]]}`, clamp(xu, L.left + 60, L.right - 60), rb.y - (L.phone ? 14 : 18), { size: L.phone ? 8.5 : 10, color: AM.dye.weld, alpha: fl });
               const fe = clamp((el2 - FALL - HOLD) / FLY);
+              // the readout steps aside as the word lifts off, so the two never overlap
+              haloText(g, `u = ${dp.u.toFixed(3)} → ${m.vocab[base.order[dp.r]]}`, clamp(xu, L.left + 60, L.right - 60), rb.y - (L.phone ? 14 : 18), { size: L.phone ? 8.5 : 10, color: AM.dye.weld, alpha: fl * (1 - clamp((el2 - FALL - HOLD + 0.18) / 0.18)) });
               if (fe > 0 && fe < 1 && sent.slotBox) {
                 const sb = sent.slotBox;
                 const P = [(x0 + x1) / 2, rb.y, (x0 + x1) / 2, rb.y - 140, sb.cx, sb.cy + 120, sb.cx, sb.cy];
@@ -1050,12 +1067,12 @@
 
       // ---- formula line
       const FORM = [
-        'h = γ ⊙ (x − μ) / σ + β',
+        'h = γ ⊙ (x − μ) / √(σ² + ε) + β',
         `z = h · W_U + b     (${V} logits)`,
         'p = softmax(z) = e^z / Σ e^z',
         'draw u ~ U[0, 1), take the segment that holds u',
         'p ∝ exp(z / T)',
-        'keep top k, or smallest set with Σp ≥ p; renormalise',
+        L.phone ? 'top k, or smallest set with mass ≥ p; renormalise' : 'keep the top k, or the smallest set with mass ≥ p; renormalise',
       ];
       const fa = AM.reducedMotion ? 1 : clamp(age / 0.5);
       haloText(g, FORM[step] || '', w / 2, h - (L.phone ? 12 : 16), { size: L.phone ? 9 : 11, color: AM.col.linenDim, alpha: 0.9 * fa, halo: false });
@@ -1086,8 +1103,7 @@
       spin: null, bead: 0,
       reveal: 1, passes: 0, positions: 0,
       hover: -1, fly: null, weaveFrom: 0, fullAt: 0,
-      wheelImg: null, oldImg: null, dirty: true,
-      lastFrame: now(),
+      wheelImg: null, wheelFor: null, oldImg: null, dirty: true,
     };
 
     // ---- "things to try", with live numbers
@@ -1157,7 +1173,7 @@
     // transcript
     const trans = el('div', { class: 'pr-trans', role: 'log', 'aria-label': 'Text so far, with the model’s own three likeliest words under each drawn word' });
     fig.appendChild(el('div', { class: 'pr-trans-wrap' }, el('span', { class: 'pr-group-label' }, 'The text so far · faint: the model’s own top three at each step (T = 1)'), trans));
-    fig.appendChild(el('figcaption', { html: 'Live model. The wheel is the tinyworld model’s real next-token distribution, reshaped by the sampling rule: divide the logits by T, keep the top k, keep the smallest set with mass ≥ p, renormalise. Arcs start at 12 o’clock in order of probability, so the bead’s stopping angle <em>is</em> the uniform random number u. &lt;pad&gt; and &lt;unk&gt; are never drawn. Our model re-reads the whole context for every token; real systems keep a <span class="term">KV cache</span> of each earlier position’s keys and values, so each new token costs one position instead of all of them.' }));
+    fig.appendChild(el('figcaption', { html: 'Live model. The wheel is the tinyworld model’s real next-token distribution, reshaped by the sampling rule: divide the logits by T, keep the top k, keep the smallest set with mass ≥ p, renormalise. Arcs start at 12 o’clock in order of probability, so the bead’s stopping angle <em>is</em> the uniform random number u. &lt;pad&gt; and &lt;unk&gt; are never drawn. Our model re-reads the whole context for every token. Real systems keep a <span class="term">KV cache</span>: each earlier position’s keys and values are stored, so only the new token’s position goes through the layers, and its attention reads the cached keys and values of all the others.' }));
 
     // ---- model plumbing
     function runModel() {
@@ -1222,8 +1238,11 @@
     }
 
     // ---- spinning
+    /** Only one token left in play (greedy, top-k 1, or a model that is sure): nothing to spin for. */
+    const sureSpin = () => !!(st.spin && st.spin.S.keep === 1);
     function dur(name) {
       if (AM.reducedMotion) return 0;
+      if (st.auto && sureSpin()) return { spin: 0.3, land: 0.06, fly: 0.3, weave: 0.34 }[name];
       const fast = st.auto;
       return { spin: fast ? 0.65 : 2.6, land: fast ? 0.14 : 0.6, fly: fast ? 0.36 : 0.75, weave: fast ? 0.42 : 0.85 }[name];
     }
@@ -1238,7 +1257,7 @@
       const top3 = [];
       for (let k = 0; k < 3; k++) top3.push({ id: raw.order[k], p: raw.q[k] });
       const pRaw = raw.q[raw.rank.get(id)];
-      const turns = st.auto ? 1 : 3;
+      const turns = st.auto ? (S.keep === 1 ? 0 : 1) : 3;
       let b1 = Math.floor(st.bead) + turns + u;
       if (b1 < st.bead + turns - 1e-6) b1 += 1;
       st.spin = { u, r, id, p: S.q[r], pRaw, top3, b0: st.bead, b1, S };
@@ -1335,6 +1354,29 @@
       g.restore();
     }
 
+    /** A word written across its arc, shrunk to fit the band; skipped when the arc is too thin. */
+    function arcLabel(g, G, S, r, a0, a1, rm) {
+      const size = G.phone ? 9.5 : 12;
+      if ((a1 - a0) * rm < size + 4) return;
+      const word = shown(S.order[r]);
+      if (word !== m.vocab[S.order[r]]) {
+        // punctuation: upright and larger, so a full stop never reads as a stray speck
+        const a = (a0 + a1) / 2;
+        g.save();
+        g.font = AM.font(size * 1.5, 'body', 700);
+        g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.fillStyle = r < 7 ? AM.col.ink : AM.col.linen;
+        g.fillText(word, G.cx + Math.cos(a) * rm, G.cy + Math.sin(a) * rm);
+        g.restore();
+        return;
+      }
+      const room = G.rw1 - G.rw0 - 8;
+      let fs = size;
+      const ww = textW(g, word, fs, 'body', 700);
+      if (ww > room) fs = Math.max(7, (fs * room) / ww);
+      radialText(g, word, G.cx, G.cy, (a0 + a1) / 2, rm, { size: fs, color: r < 7 ? AM.col.ink : AM.col.linen, center: true, weight: 700 });
+    }
+
     // ---- the wheel layer (cached; rebuilt when the distribution or size changes)
     function buildWheelImage(G, S) {
       const c = document.createElement('canvas');
@@ -1397,17 +1439,7 @@
           g.stroke();
         }
         // label
-        const size = G.phone ? 9.5 : 12;
-        const need = size + 4;
-        if (span * rm >= need) {
-          const word = m.vocab[S.order[r]];
-          const am = (a0 + a1) / 2;
-          const room = rw1 - rw0 - 8;
-          let fs = size;
-          const ww = textW(g, word, fs, 'body', 600);
-          if (ww > room) fs = Math.max(7, (fs * room) / ww);
-          radialText(g, word, cx, cy, am, rm, { size: fs, color: r < 7 ? AM.col.ink : AM.col.linen, center: true, weight: 700 });
-        }
+        arcLabel(g, G, S, r, a0, a1, rm);
       }
       // remaining mass of tokens not in play: nothing (they are cut), so the wheel is exactly the kept set
       return c;
@@ -1417,11 +1449,14 @@
     function draw() {
       const { g, w, h } = cv;
       if (!w || !st.S) return;
-      tick();
       const t = now();
       const G = geo(w, h);
       const { cx, cy, R, rTxt, rBody, rTrack, rw0, rw1, rc } = G;
-      if (st.dirty || !st.wheelImg) { st.wheelImg = buildWheelImage(G, st.S); st.dirty = false; }
+      // While a spin is under way the wheel keeps the distribution it was spun on,
+      // even if a slider moves; the new shape appears with the next token.
+      const spinning = (st.phase === 'spin' || st.phase === 'land' || st.phase === 'fly') && st.spin;
+      const wheelS = spinning ? st.spin.S : st.S;
+      if (st.dirty || !st.wheelImg || st.wheelFor !== wheelS) { st.wheelImg = buildWheelImage(G, wheelS); st.wheelFor = wheelS; st.dirty = false; }
 
       cv.clear();
       // ground: a soft halo behind the wheel and faint radial warp
@@ -1503,6 +1538,7 @@
         const room = R - rTxt - 2;
         const ww = textW(g, word, fs, 'body', 600);
         if (ww > room) fs = Math.max(6.5, (fs * room) / ww);
+        if (word === '.' || word === ',') fs = tsize * 1.8; // punctuation would otherwise be a speck
         const fresh = isNew && st.phase === 'weave' ? clamp((t - st.weaveFrom) / 0.4) : 1;
         radialText(g, word, cx, cy, a, rTxt, { size: fs, color: isGen ? (isNew ? '#fff1c2' : AM.dye.weld) : AM.col.linenDim, alpha: isGen ? 1 : 0.85, weight: isGen ? 700 : 500 });
         if (isNew && fresh < 1) D.glowDot(g, kx, ky, 4 * (1 - fresh) + 1, AM.dye.weld, 1 - fresh);
@@ -1562,7 +1598,7 @@
       }
 
       // ---- which arc is under the bead / pointer / chosen
-      const S = (st.phase === 'spin' || st.phase === 'land' || st.phase === 'fly') && st.spin ? st.spin.S : st.S;
+      const S = wheelS;
       const beadU = ((st.bead % 1) + 1) % 1;
       let focusR = -1, focusKind = '';
       if (st.phase === 'spin') { focusR = pickRank(S.cum, S.keep, beadU); focusKind = 'under'; }
@@ -1583,6 +1619,8 @@
         g.shadowBlur = 0;
         g.strokeStyle = AM.rgba('#fff4d6', 0.85); g.lineWidth = 1.2; g.stroke();
         g.restore();
+        // the overlay would hide the arc's own label, so write it again on top
+        arcLabel(g, G, S, focusR, a0, a1, (rw0 + rw1) / 2 + off * 0.65);
       }
 
       // ---- bead (with a fading trail while it spins)
@@ -1672,7 +1710,10 @@
     reset();
     cv.onResize(() => { st.dirty = true; st.oldImg = null; draw(); });
     const seen = inView(cv.canvas);
-    ctx.loop(() => { if (seen.on) draw(); });
+    // The writing keeps going while the chapter is on screen, even when the wheel
+    // itself is scrolled away (on a phone the transcript sits far below it);
+    // drawing only happens while the wheel can be seen.
+    ctx.loop(() => { tick(); if (seen.on) draw(); });
     ctx.onHidden(() => stopAuto());
     draw();
   }
