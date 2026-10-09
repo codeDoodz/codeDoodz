@@ -77,7 +77,9 @@ try {
     });
 
     await page.goto(url, { waitUntil: 'load' });
-    await page.evaluate(() => (document.fonts ? Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 2500))]) : null));
+    // Chapters mount one per task after the first paint; wait for all of them, then fonts.
+    await page.evaluate(() => Promise.race([window.AM && window.AM.whenMounted, new Promise((r) => setTimeout(r, 15000))]));
+    await page.evaluate(() => Promise.race([window.AM && window.AM.fontsReady, new Promise((r) => setTimeout(r, 2500))]));
     await page.waitForTimeout(300);
 
     const tag = (s) => `${chapter || 'page'}-${vp.name}${s ? '-' + s : ''}.png`;

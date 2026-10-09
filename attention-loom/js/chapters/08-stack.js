@@ -531,17 +531,10 @@
     #ch-${ID} .st-dp-read .s { font-family: var(--font-mono); font-size: 11px; color: var(--linen); }
     #ch-${ID} .st-dp-ctl { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
     #ch-${ID} .st-dp-ctl .st-status { font-family: var(--font-mono); font-size: 10.5px; color: var(--mist); }
-    #ch-${ID} .st-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: var(--space-5); }
+    #ch-${ID} .st-cards { display: grid; gap: var(--space-5); max-width: calc(var(--prose) + 2 * var(--space-5)); }
     #ch-${ID} .st-card { display: grid; gap: var(--space-3); align-content: start; padding: var(--space-5); border-radius: var(--radius); border: 1px solid var(--rule); background: var(--ink-2); }
     #ch-${ID} .st-card h4 { font-family: var(--font-body); font-size: 1.05rem; font-weight: 600; color: var(--linen); }
     #ch-${ID} .st-card p { color: var(--linen-dim); font-size: 0.98rem; }
-    #ch-${ID} .st-card .st-big { font-family: var(--font-display); font-style: italic; font-size: 2.2rem; line-height: 1; color: var(--weld); }
-    #ch-${ID} .st-scale { display: grid; grid-template-columns: 2.4em minmax(0, 1fr); gap: 10px 10px; align-items: center; font-family: var(--font-mono); font-size: 10px; color: var(--mist); letter-spacing: 0.04em; }
-    #ch-${ID} .st-scale b { font-family: var(--font-display); font-style: italic; font-weight: 400; font-size: 1.5rem; line-height: 1; color: var(--linen); text-align: right; }
-    #ch-${ID} .st-scale b.own { color: var(--weld); }
-    #ch-${ID} .st-scale .row { display: grid; gap: 5px; min-width: 0; }
-    #ch-${ID} .st-scale .rib { display: block; height: 14px; border-radius: 2px; background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--linen-dim) 80%, transparent) 0 calc(var(--u) * 0.62), transparent calc(var(--u) * 0.62) var(--u)); }
-    #ch-${ID} .st-scale .rib.own { background: repeating-linear-gradient(90deg, var(--weld) 0 calc(var(--u) * 0.62), transparent calc(var(--u) * 0.62) var(--u)); box-shadow: 0 0 10px -2px color-mix(in srgb, var(--weld) 80%, transparent); }
   `);
 
   // ================================================================== 1. the tower
@@ -1367,7 +1360,7 @@
       render();
     } });
     if (!net) { split.input.disabled = true; split.el.title = 'Unavailable: the local forward check did not pass'; }
-    const grid = el('div', { class: 'st-grid', role: 'group', 'aria-label': 'Logit lens table: rows are positions, columns are depths' });
+    const grid = el('div', { class: 'st-grid', role: 'group', 'aria-label': 'Logit lens table: rows are positions, columns are depths. Arrow keys move between cells.' });
     const gridWrap = el('div', { class: 'st-grid-wrap' }, grid);
     const detail = el('div', { class: 'st-detail', 'aria-live': 'polite' });
 
@@ -1459,7 +1452,7 @@
         st.forEach((s, c) => {
           const row = s.get(d, t), tk = m.topk(row, 1)[0], isFin = tk.id === fin(t);
           const cell = el('button', {
-            type: 'button', class: 'st-cell' + (isFin ? ' is-fin' : ''), id: `st-lt-c-${t}-${c}`,
+            type: 'button', class: 'st-cell' + (isFin ? ' is-fin' : ''), id: `st-lt-c-${t}-${c}`, tabindex: '-1',
             style: cellStyle(tk.p, isFin), 'aria-label': `after “${d.tokens[t]}”, ${s.long}: ${tk.token} ${pct(tk.p)}`,
           }, el('span', { class: 'w' }, tk.token), el('span', { class: 'p' }, pct(tk.p)));
           const pick = () => select(t, c);
@@ -1499,9 +1492,9 @@
       const d = S.data;
       if (!d) return;
       S.sel = { t, c };
-      grid.querySelectorAll('.st-cell.is-sel').forEach((x) => x.classList.remove('is-sel'));
+      grid.querySelectorAll('.st-cell.is-sel').forEach((x) => { x.classList.remove('is-sel'); x.tabIndex = -1; });
       const cell = grid.querySelector(`#st-lt-c-${t}-${c}`);
-      if (cell) cell.classList.add('is-sel');
+      if (cell) { cell.classList.add('is-sel'); cell.tabIndex = 0; }
       const st = stages(), s = st[c];
       const top = m.topk(s.get(d, t), 5), finId = d.top[d.NL][t][0].id;
       detail.innerHTML = '';
@@ -1576,10 +1569,15 @@
       return b;
     });
     parts.typesHost.appendChild(el('div', { class: 'st-types', role: 'group', 'aria-label': 'Kinds of dependency' }, typeBtns));
-    const status = el('span', { class: 'st-status', 'aria-live': 'polite' });
+    // the progress counter is visual only; one polite announcement when a batch is done
+    const status = el('span', { class: 'st-status', 'aria-hidden': 'true' });
+    const announce = el('span', { class: 'sr-only', role: 'status' });
     const btn = AM.ui.button({ id: 'st-dp-new', label: 'New sentences', onClick: () => { S.seed += 1; enqueue(false); } });
-    parts.ctlHost.appendChild(el('div', { class: 'st-dp-ctl' }, btn, status));
+    parts.ctlHost.appendChild(el('div', { class: 'st-dp-ctl' }, btn, status, announce));
     const read = parts.readHost;
+    // rewrite the readout only when its words change (it is a live region)
+    let readHTML = '';
+    const setRead = (html) => { if (html !== readHTML) { readHTML = html; read.innerHTML = html; } };
 
     function enqueue(all) {
       // a redraw keeps any fact jobs still waiting (pressing "New sentences" early must not drop facts)
@@ -1594,6 +1592,8 @@
       S.done = 0;
       S.dirty = true;
       status.textContent = 'reading…';
+      announce.textContent = '';
+      read.setAttribute('aria-busy', 'true');
     }
     function compute(job) {
       const ids = m.encode(job.ex.words.join(' ')).ids;
@@ -1619,14 +1619,14 @@
         const ex = S.hover ? S.data[i][S.hover.k] : null;
         const vals = (ex ? ex.ps : mns[i]).map((v, l) => `x${sub(l)} ${f2(v)}`).join(' → ');
         const s = settle(mns[i]);
-        read.innerHTML = ex
+        setRead(ex
           ? `<b>${esc(ty.label)}</b>, one sentence: <span class="s">${esc(ex.words.join(' '))} → ${esc(ex.target)}</span><br>P(${esc(ex.target)}): ${vals}`
-          : `<b>${esc(ty.label)}</b>, mean of ${S.data[i].length} sentences: ${vals}. ${s > 0 ? `Settled (mean ≥ 0.9) after layer ${s - 1}.` : 'Not settled below the output.'} <br>e.g. <span class="s">${esc(ty.eg)}</span>`;
+          : `<b>${esc(ty.label)}</b>, mean of ${S.data[i].length} sentences: ${vals}. ${s > 0 ? `Settled (mean ≥ 0.9) after layer ${s - 1}.` : 'Not settled below the output.'} <br>e.g. <span class="s">${esc(ty.eg)}</span>`);
       } else {
         const order = TYPES.map((ty, k) => ({ ty, s: settle(mns[k]) })).filter((x) => x.s > 0);
-        read.innerHTML = order.length
+        setRead(order.length
           ? `Mean P(correct) settles above 0.9 after ${order.map((x) => `<b>${esc(x.ty.label.toLowerCase())}</b> layer ${x.s - 1}`).join(', ')}. Hover or tap a kind, or a single thread, for its numbers.`
-          : 'Reading sentences through the model…';
+          : 'Reading sentences through the model…');
       }
       S.dirty = true;
       const desc = TYPES.map((ty, k) => (mns[k] ? `${ty.label}: ${mns[k].map((v) => f2(v)).join(', ')}` : '')).filter(Boolean).join('; ');
@@ -1759,9 +1759,10 @@
           job.ex.words.length && compute(job);
           S.done++;
         }
-        if (!S.queue.length) status.textContent = `${S.data.reduce((s, a) => s + a.length, 0)} sentences, read live`;
-        else status.textContent = `reading… ${S.done}/${S.total}`;
+        const finished = !S.queue.length;
+        status.textContent = finished ? `${S.data.reduce((s, a) => s + a.length, 0)} sentences, read live` : `reading… ${S.done}/${S.total}`;
         sync();
+        if (finished) { read.setAttribute('aria-busy', 'false'); announce.textContent = status.textContent; }
       }
       const anim = S.data.some((arr) => arr.some((ex) => S.t - ex.born < 0.8));
       if (vis.on && (S.dirty || anim)) drawChart();
@@ -1797,7 +1798,6 @@
       const heroAns = hs.top[hs.NL][hq][0];
       const lensAt = (s, l, t) => s.top[l][t][0];
       const cupIdx = hs.tokens.indexOf('cup');
-      const cfg = m.config;
 
       // ---------------------------------------------------------------- 1. tower + steps
       const towerHost = el('div');
@@ -1877,7 +1877,6 @@
         step('1 · Repeat', 'One block, stacked',
           'The last four chapters built one transformer block. Attention lets positions share information, the MLP works on each position alone, and both add their results to the residual stream. A full model is that block repeated, each copy with its own weights.',
           'The tiny model on this page stacks <strong>3</strong>. GPT-2 small stacks <strong>12</strong>. GPT-3 stacks <strong>96</strong>.',
-          `Each of its blocks has ${cfg.n_head} attention heads whose queries, keys and values have ${cfg.d_model / cfg.n_head} numbers each (d<sub>head</sub> = d<sub>model</sub> / n<sub>head</sub> = ${cfg.d_model} / ${cfg.n_head}), and an MLP that widens every vector from ${cfg.d_model} to ${cfg.d_ff} numbers and back.`,
           'In the picture, each vertical thread is one word’s residual stream, rising from its embedding at the bottom to the output at the top. The dyed arcs are this model’s real attention, one colour per head. The violet knots are MLP edits, bigger where the MLP moved the stream further.'),
         step('2 · Compose', 'Later layers build on earlier ones',
           `Look at the last word, <em>is</em>. To continue, the model has to recall which colour went with <em>ball</em>.`,
@@ -1887,15 +1886,15 @@
           '<span class="st-small">Across all 1,004 held-out colour questions, silencing L0H0 at the question word alone drops accuracy from 98.6% to 46.5%, close to picking one of the listed colours at random. Measured offline with these same weights.</span>',
           'A later head reading what an earlier head wrote is called <span class="term">composition</span>. It is one reason depth helps: every layer starts from everything the layers below have worked out.'),
         step('3 · The logit lens', 'Reading the stream partway up',
-          'At the top, the model turns the stream into a guess: a final LayerNorm, the unembedding matrix, then softmax. Nothing stops us applying the same three steps lower down.',
+          'At the top, the model turns the stream into a guess: a final LayerNorm, the unembedding matrix W<sub>U</sub> (one score per vocabulary word; chapter 9 opens it up), then softmax. Nothing stops us applying the same three steps lower down.',
           '<div class="math block st-math">lens(x<sub>ℓ</sub>) = softmax(LN<sub>f</sub>(x<sub>ℓ</sub>) W<sub>U</sub> + b<sub>U</sub>)</div>',
-          'Each bead is that guess for one word at one depth. <strong style="color:var(--weld)">Gold</strong> beads already match the final answer, <strong style="color:var(--woad)">blue</strong> ones guess a different word, and bigger means more probability. This trick is called the <span class="term">logit lens</span>. Chapter 6 used it on a single position; here it reads the whole tower.'),
+          'Each bead is that guess for one word at one depth. <strong style="color:var(--weld)">Gold</strong> beads already match the final answer, <strong style="color:var(--woad)">blue</strong> ones guess a different word, and bigger means more probability. This trick is the <span class="term">logit lens</span>, introduced in a 2020 blog post about GPT-2 by the writer nostalgebraist. Chapter 6’s ladder used it on one position; here it reads the whole tower.'),
         step('4 · Sharpen', 'A guess comes into focus',
           trace4,
           `Follow <em>is</em> upward. The embedding alone makes a vague guess (<em>${esc(lensAt(hs, 0, hq).token)}</em>, ${pct(lensAt(hs, 0, hq).p)}), and after layer 0 the top guess is still <em>${esc(lensAt(hs, 1, hq).token)}</em> (${pct(lensAt(hs, 1, hq).p)}). After layer 1, home of the colour binder, the lens reads <em>${esc(lensAt(hs, 2, hq).token)}</em> (${pct(lensAt(hs, 2, hq).p)}). Layer 2 only sharpens it.`,
           cupText()),
         step('5 · Depth', 'Each skill has its own height',
-          'Pick a sentence and the tower re-weaves it. A pronoun is settled after layer 0. Agreement starts at <em>are</em> and flips to <em>is</em> in layer 1, where a head reads the singular noun <em>key</em>. A copied name sharpens layer by layer. An animal sound stays <em>oink</em>, the model’s default, until the last layer’s MLP writes the right one.',
+          'Pick a sentence and the tower re-weaves it. A pronoun is settled after layer 0. Agreement starts at <em>are</em> and flips to <em>is</em> in layer 1, where a head reads the singular noun <em>key</em>. A copied name sharpens layer by layer. For the dog, the sound stays <em>oink</em>, the model’s default, until the last layer’s MLP writes <em>woof</em>. Only the cat waits that long; the other animals get their sound in layer 0 or 1.',
           el('div', { class: 'st-chips', role: 'group', 'aria-label': 'Sentences for the tower' }, chip5),
           trace5),
       ];
@@ -1942,27 +1941,13 @@
         el('div', { class: 'prose' },
           el('span', { class: 'st-kicker' }, 'Many sentences'),
           el('h3', { id: 'st-dp-h' }, 'Different skills, different depths'),
-          el('p', { html: 'One sentence could be a fluke, so here are many. For each kind of dependency the page writes fresh sentences, runs them, and asks the lens how much probability sits on the right answer at each depth.' }),
-          el('p', { html: 'The threads climb at different heights. Pronouns jump in layer 0, where one head fetches the subject. Colour binding stays near zero until layer 1. Copied names and memorised facts keep climbing into the last layer.' }),
+          el('p', { html: 'One sentence could be a fluke, so here are many. For each kind of dependency the page writes fresh sentences, runs them, and asks the lens how much probability sits on the right answer at each depth. Taken together, the memorised facts climb differently from the dog in the tower: they make more than half their climb in layer 0, where the first MLP recalls them (chapter 6), and reach certainty only at the top.' }),
           el('p', { html: 'Agreement parks near one half after layer 0 for a neat reason: at that depth the stream says <em>are</em> for every sentence (we checked all 899 held-out agreement questions), which is right for plural subjects and wrong for singular ones. Layer 1 reads the head noun and fixes the singulars.' }),
-          el('p', { html: 'Part of the order follows from the wiring. A layer can only use what the layers below it have already written, so a skill built on another skill has to sit higher in the tower. Colour binding is one: L1H3 in layer 1 leans on what L0H0 wrote in layer 0, as the silence button in the tower showed. Why names and facts wait for the last layer is harder to read from these curves alone.' }))));
+          el('p', { html: 'Part of the order follows from the wiring. A layer can only use what the layers below it have already written, so a skill built on another skill has to sit higher in the tower. Colour binding is one: L1H3 in layer 1 leans on what L0H0 wrote in layer 0, as the silence button in the tower showed. Why copied names, and the last stretch of the facts, need the final layer is harder to read from these curves alone.' }))));
       buildProfiles(ctx, { canvasHost: dpCanvas, typesHost: dpTypes, ctlHost: dpCtl, readHost: dpRead }, m);
 
-      // ---------------------------------------------------------------- scale + caveat
-      const rib = (n, own) => {
-        const r = el('span', { class: 'rib' + (own ? ' own' : '') });
-        r.style.setProperty('--u', `calc(100% / ${n})`);
-        r.style.width = `${(n / 96 * 100).toFixed(3)}%`;
-        return r;
-      };
+      // ---------------------------------------------------------------- caveat
       body.appendChild(el('div', { class: 'st-cards' },
-        el('div', { class: 'st-card' },
-          el('div', { class: 'fig-top' }, el('h4', {}, 'Taller towers'), ui.badge('illustration')),
-          el('div', { class: 'st-scale', 'aria-label': 'Layer counts: tinyworld 3, GPT-2 small 12, GPT-3 96' },
-            el('b', { class: 'own' }, '3'), el('div', { class: 'row' }, rib(3, true), el('span', {}, 'tinyworld · d_model 64')),
-            el('b', {}, '12'), el('div', { class: 'row' }, rib(12), el('span', {}, 'GPT-2 small · d_model 768')),
-            el('b', {}, '96'), el('div', { class: 'row' }, rib(96), el('span', {}, 'GPT-3 · d_model 12,288'))),
-          el('p', { html: 'Real models stack many more layers, with much wider streams. More layers mean more rounds of reading and writing, so longer chains of composition fit inside one forward pass. The logit lens comes from a 2020 blog post about GPT-2 (by the writer nostalgebraist), which found that its middle layers often already decode to something close to the final guess, then sharpen towards the top.' })),
         el('div', { class: 'st-card' },
           el('h4', {}, 'Read the lens with care'),
           el('p', { html: 'Only the top of the stream is trained to be decoded. The lens assumes the lower layers already speak the same language, and they need not. Even here the lowest readings are often odd: for the colour sentence, the embedding column of the table guesses <em>are</em> after <em>the</em> and <em>of</em> after <em>is</em>.' }),
@@ -1970,7 +1955,7 @@
 
       body.appendChild(el('div', { class: 'callout' },
         el('span', { class: 'callout-label' }, 'Key idea'),
-        el('p', { html: 'A transformer is one block, repeated. Each layer reads the residual stream, adds a refinement and passes it up, so later layers can build on what earlier ones wrote. The logit lens decodes the stream partway up and shows the guess taking shape: in this tiny model, pronouns are settled after layer 0, colours after layer 1, and copied names and facts are finished only at the top.' })));
+        el('p', { html: 'A transformer is one block, repeated. Each layer reads the residual stream, adds a refinement and passes it up, so later layers can build on what earlier ones wrote. The logit lens decodes the stream partway up and shows the guess taking shape: in this tiny model, pronouns are settled after layer 0, colours after layer 1, and copied names are finished only at the top.' })));
     },
   });
 })();

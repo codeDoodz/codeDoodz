@@ -64,7 +64,8 @@
   /** Text with an ink halo so it reads over threads. */
   function haloText(g, str, x, y, o = {}) {
     g.save();
-    g.font = AM.font(o.size || 11, o.role || 'mono', o.weight, o.italic);
+    // legibility floor (contract rule 8); o.minSize: 0 only for decorative text
+    g.font = AM.font(Math.max(o.size || 11, o.minSize ?? (AM.minText || 0)), o.role || 'mono', o.weight, o.italic);
     g.textAlign = o.align || 'center';
     g.textBaseline = o.baseline || 'middle';
     g.globalAlpha *= o.alpha ?? 1;
@@ -242,9 +243,7 @@
     #ch-predict .pr-greedy .pr-loop { color: var(--madder); text-decoration: underline wavy color-mix(in srgb, var(--madder) 60%, transparent); text-underline-offset: 4px; }
 
     #ch-predict .pr-hero { gap: var(--space-4); }
-    #ch-predict .pr-hero-intro { max-width: 70ch; }
-    #ch-predict .pr-hero-intro h3 { font-family: var(--font-display); font-weight: 500; font-size: clamp(1.7rem, 1.2rem + 1.6vw, 2.5rem); line-height: 1.05; }
-    #ch-predict .pr-hero-intro h3 em { font-style: italic; color: var(--weld); font-weight: 400; }
+    #ch-predict .pr-hero-intro { margin-bottom: calc(var(--space-6) - var(--space-8)); }
     #ch-predict .pr-grid { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr); gap: var(--space-5) var(--space-6); align-items: start; }
     @media (max-width: 900px) { #ch-predict .pr-grid { grid-template-columns: minmax(0, 1fr); } }
     #ch-predict .pr-wheelbox { min-width: 0; display: grid; gap: var(--space-3); }
@@ -345,6 +344,7 @@
     const lastTok = toks[toks.length - 1];
     const z = A.logits, probs = A.probs;
     const V = z.length, d = A.x.length;
+    const nWords = m.vocab.filter((w, i) => !banned.has(i) && !/^[.,]$/.test(w)).length;
     let zmin = Infinity, zmax = -Infinity;
     for (let j = 0; j < V; j++) { zmin = Math.min(zmin, z[j]); zmax = Math.max(zmax, z[j]); }
     let psum = 0; for (let j = 0; j < V; j++) psum += probs[j];
@@ -395,17 +395,17 @@
         label: '1 · The last vector',
         html: [
           `After the last block, every position holds a vector of d<sub>model</sub> = ${d} numbers. To guess the word after “${lastTok}”, only the vector at the last position is needed.`,
-          `It goes through one final LayerNorm, LN<sub>f</sub>: subtract the mean μ, divide by the standard deviation σ (a tiny ε = 10<sup>−5</sup> keeps it from dividing by zero), then apply a learned scale γ and shift β to each dimension. The live vector has length ${b(fmt(xN, 1))}; after LN<sub>f</sub> it has length ${b(fmt(hN, 1))}.`,
+          `It goes through one final LayerNorm, LN<sub>f</sub> (<a href="#ch-residual">chapter 7</a>). The live vector has length ${b(fmt(xN, 1))}; after LN<sub>f</sub> it has length ${b(fmt(hN, 1))}.`,
           `In training, every position predicts its own next word at the same time. When generating, only the last one matters.`,
         ],
       },
       {
         label: '2 · A score for every word',
         html: [
-          `The <span class="term">unembedding</span> matrix W<sub>U</sub> has one column per vocabulary entry: ${d} rows by ${V} columns in our model. The dot product of h with column j, plus a bias, is the <span class="term">logit</span> for word j:`,
+          `The <span class="term">unembedding</span> matrix W<sub>U</sub> has one column per vocabulary entry: ${d} rows by ${V} columns in our model. The ${V} entries are ${nWords} words, the full stop and comma, and two special tokens, &lt;pad&gt; and &lt;unk&gt;, that the sampler never draws. The dot product of h with column j, plus a bias, is the <span class="term">logit</span> for token j:`,
           `<span class="math block">z<sub>j</sub> = h · W<sub>U</sub>[:, j] + b<sub>j</sub></span>`,
           `That is ${V} dot products, done as one vector–matrix multiply. A logit is an unnormalised score, any real number. Here they run from ${b(fmt(zmin, 1))} to ${b(fmt(zmax, 2))}, for <em>${word(0)}</em>.`,
-          `Large models do the same with vocabularies of roughly 100,000 to 200,000 tokens, which makes W<sub>U</sub> one of their biggest matrices. Some reuse the embedding matrix here (tied weights); ours learned its own.`,
+          `Large models do the same with vocabularies of about 100,000 to a few hundred thousand tokens, which makes W<sub>U</sub> one of their biggest matrices. Some reuse the embedding matrix here (tied weights); ours learned its own.`,
         ],
       },
       {
@@ -748,7 +748,7 @@
         const img = clothImage(L);
         g.save();
         g.globalAlpha *= tw.cloth;
-        haloText(g, L.phone ? `W_U · ${d} × ${V} · a column per word` : `W_U · ${d} rows × ${V} columns, one column per word`, cl.x, cl.y - 9, { size: L.phone ? 8.5 : 10, align: 'left', color: AM.col.mist, halo: false });
+        haloText(g, L.phone ? `W_U · ${d} × ${V} · a column per token` : `W_U · ${d} rows × ${V} columns, one column per token`, cl.x, cl.y - 9, { size: L.phone ? 8.5 : 10, align: 'left', color: AM.col.mist, halo: false });
         g.drawImage(img, cl.x, cl.y, cl.w, cl.h);
         // columns the shuttle has passed glow faintly gold
         const passedW = clamp(shuttleX - cl.x, 0, cl.w);
@@ -1113,14 +1113,14 @@
     const tryLine = el('p', { html: `<strong>Try:</strong> Greedy on “the king”, then Auto-write, and watch it get stuck in a loop. Temperature 2.5 on “the capital of japan is”: <em>${m.vocab[capT25.order[0]]}</em> falls from ${pct(capT1.q[0])} to ${pct(capT25.q[0])}, so ${pct(1 - capT25.q[0])} of draws now give some other word, such as <em>${m.vocab[capT25.order[1]]}</em> or <em>${m.vocab[capT25.order[2]]}</em>. Top-p 0.5 on “… she was cold . the”: ${NV} candidates shrink to ${coldP.keep}.` });
 
     // ---- DOM
+    const intro = ctx.subhead('Free play', 'Spin the wheel', 'This is the whole loop on the live model. The inner wheel is the distribution for the next token after your temperature, top-k and top-p: each word’s arc is its probability. Spin, and the bead stops at a random point u. The word under it joins the text in the outer ring, which is the model’s whole context window of 32 slots. The model reads everything in the ring again, and the wheel re-forms for the next token.');
+    intro.classList.add('pr-hero-intro');
+    tryLine.classList.add('subhead-lead');
+    intro.appendChild(tryLine);
+    body.appendChild(intro);
     const fig = el('figure', { class: 'fig ch-wide pr-hero' });
     body.appendChild(fig);
     fig.appendChild(el('div', { class: 'fig-top' }, el('span', { class: 'fig-title' }, 'The wheel · sample, append, repeat'), ui.badge('live')));
-    fig.appendChild(el('div', { class: 'prose pr-hero-intro' },
-      el('h3', { html: 'Spin the <em>wheel</em>' }),
-      el('p', { html: 'This is the whole loop on the live model. The inner wheel is the distribution for the next token after your temperature, top-k and top-p: each word’s arc is its probability. Spin, and the bead stops at a random point u. The word under it joins the text in the outer ring, which is the model’s whole context window of 32 slots. The model reads everything in the ring again, and the wheel re-forms for the next token.' }),
-      tryLine,
-    ));
 
     const grid = el('div', { class: 'pr-grid' });
     fig.appendChild(grid);
@@ -1664,14 +1664,26 @@
       else if (st.phase === 'land' || st.phase === 'fly') { kicker = st.spin.S.keep === 1 ? 'the only choice' : `u = ${st.spin.u.toFixed(3)}`; main = shown(st.spin.id); sub = `p = ${pct(st.spin.p)}`; mainCol = AM.dye.weld; }
       else if (focusKind === 'hover') { kicker = `rank ${focusR + 1}`; main = shown(S.order[focusR]); sub = `p = ${pct(S.q[focusR])}`; }
       else if (st.phase === 'weave') { kicker = 'reading'; main = `${n} tokens`; sub = 'forward pass'; mainCol = AM.col.linenDim; }
-      else { kicker = `next token · ${n + 1} of ${NCTX}`; main = st.T <= 0 ? 'greedy' : 'spin me'; sub = S.keep === 1 ? `only ${m.vocab[S.order[0]]}` : `≈ ${fmt(S.eff, 1)} choices`; mainCol = AM.col.linenDim; }
-      const fit = (str, size, role, maxW, weight, italic) => {
-        g.save(); g.font = AM.font(size, role, weight, italic); const mw = g.measureText(str).width; g.restore();
-        return mw > maxW ? (size * maxW) / mw : size;
+      else { kicker = [`next token · ${n + 1} of ${NCTX}`, 'next token']; main = st.T <= 0 ? 'greedy' : 'spin me'; sub = S.keep === 1 ? `only ${m.vocab[S.order[0]]}` : `≈ ${fmt(S.eff, 1)} choices`; mainCol = AM.col.linenDim; }
+      /** First candidate that fits maxW at no less than minSize (shrinking it if needed); else the last one at minSize. */
+      const fit = (cands, size, role, maxW, minSize, weight, italic) => {
+        cands = [].concat(cands);
+        g.save(); g.font = AM.font(size, role, weight, italic);
+        let pick = null;
+        for (const str of cands) {
+          const mw = g.measureText(str).width;
+          const sz = mw > maxW ? (size * maxW) / mw : size;
+          if (sz >= minSize) { pick = { str, size: sz }; break; }
+        }
+        g.restore();
+        return pick || { str: cands[cands.length - 1], size: minSize };
       };
-      haloText(g, kicker, cx, cy - big * 0.95, { size: fit(kicker, small, 'mono', rc * 1.55), color: AM.col.mist, halo: false });
-      haloText(g, main, cx, cy + 1, { size: fit(main, big, 'display', rc * 1.7, 500, true), role: 'display', weight: 500, italic: true, color: mainCol, halo: false });
-      haloText(g, sub, cx, cy + big * 0.95, { size: fit(sub, small + 1, 'mono', rc * 1.55), color: AM.col.linenDim, halo: false });
+      const fk = fit(kicker, small, 'mono', rc * 1.55, 9);
+      const fm = fit(main, big, 'display', rc * 1.7, 12, 500, true);
+      const fsub = fit(sub, small + 1, 'mono', rc * 1.55, 9);
+      haloText(g, fk.str, cx, cy - big * 0.95, { size: fk.size, color: AM.col.mist, halo: false });
+      haloText(g, fm.str, cx, cy + 1, { size: fm.size, role: 'display', weight: 500, italic: true, color: mainCol, halo: false });
+      haloText(g, fsub.str, cx, cy + big * 0.95, { size: fsub.size, color: AM.col.linenDim, halo: false });
 
       // ---- the drawn word flies from its arc to the next slot
       if (st.phase === 'fly' && st.spin) {

@@ -1,14 +1,12 @@
 /* Chapter 07 — The River Thread: the residual stream and LayerNorm.
 
-   Three figures:
+   Two figures:
    1. "The river" (scrollytelling stage): one token's residual stream rising
       through three pre-LN blocks. Sublayers draw a copy off through a LayerNorm
       gate and pour their output back in by addition. A switch replaces the adds
       with overwrites. The strip on the left is a real (toy) 16-d computation.
    2. LayerNorm stepper: exact LayerNorm / RMSNorm on a 12-d toy vector, step by
-      step, with scale/shift invariance checks.
-   3. Gradient highway: real backprop through a deep random tanh stack, with and
-      without skip connections. */
+      step, with scale/shift invariance checks. */
 (() => {
   const ID = 'residual';
   const MM = AM.math;
@@ -26,6 +24,23 @@
   const stdPop = (a) => { const m = mean(a); let v = 0; for (let i = 0; i < a.length; i++) v += (a[i] - m) * (a[i] - m); return Math.sqrt(v / a.length); };
   const rand = (a, b) => a + Math.random() * (b - a);
   const isStacked = () => (window.matchMedia ? window.matchMedia('(max-width: 900px)').matches : window.innerWidth <= 900);
+  /** Side-by-side layout: the tallest canvas that keeps the whole sticky stage (title, controls,
+      caption) on screen below its 6vh top offset. host holds only the canvas. Never below 380px. */
+  const deskFit = (host) => {
+    const stage = host && host.closest('.ch-stage');
+    if (!stage) return Infinity;
+    const other = Math.max(0, stage.offsetHeight - host.offsetHeight);
+    return Math.max(380, window.innerHeight * 0.94 - other - 16);
+  };
+  /** The side-by-side stage canvas depends on the window's height, which a width observer misses. */
+  const fitOnTallnessChange = (cv) => {
+    let ih = window.innerHeight;
+    window.addEventListener('resize', () => {
+      if (window.innerHeight === ih) return;
+      ih = window.innerHeight;
+      if (!isStacked()) cv.resize();
+    }, { passive: true });
+  };
 
   /** Mantissa/exponent with one decimal, carrying 9.96 → 1.0×10¹ correctly. */
   const sci = (v) => {
@@ -43,15 +58,10 @@
     const { m, e } = sci(v);
     return `${m}×10${sup(e)}`;
   };
-  /** Same, as HTML with a real <sup> exponent (for DOM readouts in the display face). */
-  const fmtMagHTML = (v) => {
-    if (!Number.isFinite(v) || v === 0) return fmtMag(v);
-    if (plainRange(v)) return v.toPrecision(3);
-    const { m, e } = sci(v);
-    return `${m}<span class="gh-x">×</span>10<sup>${e < 0 ? '−' : ''}${Math.abs(e)}</sup>`;
-  };
   /** Signed fixed-point with a real minus sign. */
   const fmtS = (v, d = 2) => (v < 0 ? '−' : '') + Math.abs(v).toFixed(d);
+  /** One decimal without the leading zero (−.5, .7, 1.4), for tight columns on phones. */
+  const fmtTight = (v) => (Math.abs(v) < 0.05 ? '0' : (v < 0 ? '−' : '') + Math.abs(v).toFixed(1).replace(/^0\./, '.'));
 
   /** Is this element (roughly) on screen? Lets each figure idle while the chapter is visible. */
   const visibility = (el) => {
@@ -138,10 +148,19 @@
     #ch-${ID} .rs-hint { font-family: var(--font-mono); font-size: var(--fs-micro); letter-spacing: 0.06em; color: var(--mist); }
     #ch-${ID} .rs-hint b { color: var(--linen); font-weight: 500; }
     #ch-${ID} .rs-cap-phone { display: none; }
+    #ch-${ID} .rs-short { display: none; }
     @media (max-width: 900px) {
-      #ch-${ID} .rs-cap-desk, #ch-${ID} .rs-stage .fig-title, #ch-${ID} .rs-hint { display: none; }
+      #ch-${ID} .rs-cap-desk, #ch-${ID} .rs-hint { display: none; }
       #ch-${ID} .rs-cap-phone { display: block; }
-      #ch-${ID} .rs-stage .fig-top { min-height: 0; justify-content: flex-end; }
+      #ch-${ID} .rs-stage .fig-top { min-height: 0; }
+    }
+    @media (max-width: 520px) {
+      #ch-${ID} .rs-stage .rs-long { display: none; }
+      #ch-${ID} .rs-stage .rs-short { display: inline; }
+    }
+    @media (min-width: 901px) and (max-height: 860px) {
+      #ch-${ID} .rs-cap-desk { display: none; }
+      #ch-${ID} .rs-cap-phone { display: block; }
     }
     /* keep Greek letters lower-case inside the shared upper-case widgets */
     #ch-${ID} .ctl-label, #ch-${ID} .seg button { text-transform: none; }
@@ -184,31 +203,6 @@
       #ch-${ID} .ln-dl { order: 6; }
     }
 
-    /* Norm placement cards */
-    #ch-${ID} .rs-card { display: grid; gap: var(--space-2); align-content: start; padding: var(--space-4); border-radius: var(--radius); border: 1px solid var(--rule); background: color-mix(in srgb, var(--ink-2) 70%, transparent); }
-    #ch-${ID} .rs-card h4 { font-family: var(--font-mono); font-size: var(--fs-micro); letter-spacing: 0.12em; text-transform: uppercase; color: var(--weld); font-weight: 500; }
-    #ch-${ID} .rs-card .math { display: inline-block; justify-self: start; white-space: normal; }
-    #ch-${ID} .rs-card p { font-size: var(--fs-small); line-height: 1.55; color: var(--linen-dim); }
-
-    /* Gradient highway */
-    #ch-${ID} .gh-grid { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); grid-template-areas: 'prose panel' 'read panel' '. panel'; grid-template-rows: auto auto 1fr; column-gap: clamp(24px, 4vw, 56px); row-gap: var(--space-5); align-items: start; }
-    #ch-${ID} .gh-grid > .prose { grid-area: prose; }
-    #ch-${ID} .gh-grid > .panel { grid-area: panel; }
-    #ch-${ID} .gh-side { grid-area: read; display: grid; gap: var(--space-4); align-content: start; }
-    #ch-${ID} .gh-side > .gh-head { margin-bottom: calc(-1 * var(--space-2)); }
-    #ch-${ID} .gh-num sup { font-size: 0.55em; vertical-align: 0.75em; margin-left: 1px; }
-    #ch-${ID} .gh-num .gh-x { font-family: var(--font-body); font-weight: 400; font-size: 0.7em; margin: 0 0.08em; }
-    #ch-${ID} .gh-head { font-family: var(--font-mono); font-size: var(--fs-micro); letter-spacing: 0.12em; text-transform: uppercase; color: var(--mist); }
-    #ch-${ID} .gh-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
-    #ch-${ID} .gh-tile { display: grid; gap: 4px; padding: var(--space-3) var(--space-4); border-radius: var(--radius-sm); border: 1px solid var(--rule); background: var(--ink); min-width: 0; }
-    #ch-${ID} .gh-tile .gh-lab { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--mist); }
-    #ch-${ID} .gh-tile .gh-num { font-family: var(--font-display); font-size: clamp(1.5rem, 1.1rem + 1.3vw, 2.2rem); line-height: 1.05; font-variant-numeric: lining-nums; overflow-wrap: anywhere; }
-    #ch-${ID} .gh-tile.is-res { border-color: color-mix(in srgb, var(--weld) 40%, var(--rule)); }
-    #ch-${ID} .gh-tile.is-res .gh-num { color: var(--weld); }
-    #ch-${ID} .gh-tile.is-plain { border-color: color-mix(in srgb, var(--madder) 40%, var(--rule)); }
-    #ch-${ID} .gh-tile.is-plain .gh-num { color: var(--madder); }
-    #ch-${ID} .gh-note { font-family: var(--font-mono); font-size: 11px; color: var(--mist); letter-spacing: 0.04em; }
-    @media (max-width: 900px) { #ch-${ID} .gh-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'prose' 'panel' 'read'; grid-template-rows: auto; } }
   `);
 
   // ================================================================== FIGURE 1 — the river
@@ -216,8 +210,7 @@
   const RIVER_STEPS = [
     { read: 0, write: 0, focus: -1 },
     { read: 1, write: 0, focus: 0, gate: 1 },
-    { read: 1, write: 1, focus: 0, plus: 1 },
-    { read: 2, write: 2, focus: 1, plus: 1 },
+    { read: 2, write: 2, focus: [0, 1], plus: 1 },
     { read: 6, write: 6, focus: -1, bus: 1 },
     { read: 6, write: 6, focus: -1, replace: 1 },
   ];
@@ -246,9 +239,10 @@
 
     const cv = ctx.canvas(host, {
       label: 'Illustration of one token\'s residual stream as a rising river of gold light. Six workshops on its bank (attention and MLP sublayers of three blocks) draw a copy off through a LayerNorm gate and pour coloured dye back in by addition. A strip on the left shows the 16 numbers of the stream at each level.',
-      height: (w) => (isStacked() ? Math.round(Math.min(w * 1.12, Math.max(330, window.innerHeight * 0.47))) : Math.round(Math.min(w * 1.2, Math.max(520, window.innerHeight * 0.7)))),
+      height: (w) => (isStacked() ? Math.round(Math.min(w * 1.12, Math.max(330, window.innerHeight * 0.47)) - (w < 520 ? 30 : 0)) : Math.round(Math.min(w * 1.2, Math.max(520, window.innerHeight * 0.7), deskFit(host)))),
     });
     const vis = visibility(cv.wrap);
+    fitOnTallnessChange(cv);
 
     // ---------------------------------------------------------------- toy numbers behind the strip
     function recompute() {
@@ -513,8 +507,8 @@
         g.fillRect(stripX + Lo.stripW + 1, yS - 1, narrow ? 2.5 : 4, 2);
       }
       const hy = topY - (narrow ? 9 : 12);
-      D.text(g, 'STREAM x', stripX, hy, { role: 'mono', size: narrow ? 7.5 : 8.5, color: AM.col.mist, letterSpacing: '0.08em' });
-      D.text(g, 'COS', cosX + cosW, hy, { role: 'mono', size: narrow ? 7.5 : 8.5, color: AM.col.mist, align: 'right', letterSpacing: '0.08em' });
+      D.text(g, 'STREAM x', stripX, hy, { role: 'mono', size: 8.5, color: AM.col.mist, letterSpacing: '0.08em' });
+      D.text(g, 'COS', cosX + cosW, hy, { role: 'mono', size: 8.5, color: AM.col.mist, align: 'right', letterSpacing: '0.08em' });
       D.text(g, narrow ? 'x' + sub(0) : 'x' + sub(0) + ' · 16 dims', stripX, Lo.M[0] + (narrow ? 11 : 14), { role: 'mono', size: narrow ? 8 : 8.5, color: AM.col.mist });
       if (!narrow) D.text(g, 'vs x' + sub(0), cosX + cosW, Lo.M[0] + 14, { role: 'mono', size: 8.5, color: AM.col.mist, align: 'right' });
     }
@@ -693,7 +687,7 @@
         const labelW = narrow ? 44 : 92;
         if (narrow) {
           D.text(g, name, boxX + 7, W.top + bh / 2 - 1, { role: 'mono', size: 8.5, color: on > 0.5 ? AM.col.linen : AM.col.mist, alpha: la, letterSpacing: '0.06em' });
-          D.text(g, 'block ' + blockOf(k), boxX + 7, W.top + bh / 2 + 9.5, { role: 'mono', size: 7.5, color: on > 0.5 ? dye : AM.col.mist, alpha: la });
+          D.text(g, 'block ' + blockOf(k), boxX + 7, W.top + bh / 2 + 9.5, { role: 'mono', size: 8.5, color: on > 0.5 ? dye : AM.col.mist, alpha: la });
         } else {
           D.text(g, name, boxX + 12, W.top + bh / 2 - 2, { role: 'mono', size: 9.5, color: on > 0.5 ? AM.col.linen : AM.col.mist, alpha: la, letterSpacing: '0.1em' });
           D.text(g, 'block ' + blockOf(k), boxX + 12, W.top + bh / 2 + 12, { role: 'mono', size: 8.5, color: on > 0.5 ? dye : AM.col.mist, alpha: la });
@@ -709,7 +703,7 @@
 
         // LayerNorm gate on the offtake
         const gx = W.gate.x, gy = W.gate.y;
-        const gw = narrow ? 17 : 22, gh = narrow ? 11 : 14;
+        const gw = narrow ? 20 : 22, gh = narrow ? 13 : 14;
         const ga = 0.3 + 0.7 * st.read[k];
         g.save();
         if (st.gate > 0.02 && st.focus[k] > 0.5) {
@@ -725,7 +719,7 @@
         g.strokeStyle = AM.rgba(st.read[k] > 0.5 ? GOLD : AM.col.ruleStrong, st.read[k] > 0.5 ? 0.85 * ga : 0.9);
         g.lineWidth = 1;
         g.stroke();
-        D.text(g, 'LN', gx, gy + 0.5, { role: 'mono', size: narrow ? 6.5 : 8, align: 'center', baseline: 'middle', color: st.read[k] > 0.5 ? GOLD : AM.col.mist, alpha: ga });
+        D.text(g, 'LN', gx, gy + 0.5, { role: 'mono', size: narrow ? 8.5 : 8, align: 'center', baseline: 'middle', color: st.read[k] > 0.5 ? GOLD : AM.col.mist, alpha: ga });
         g.restore();
 
         // the add: ⊕ where the return channel meets the river
@@ -775,16 +769,16 @@
       const { riverX, tileY, narrow, w, pad } = Lo;
       // token at the source
       const tile = D.token(g, 'crown', riverX, tileY, { size: narrow ? 12 : 14, selected: true });
-      D.text(g, narrow ? 'embedding' : 'token embedding → x' + sub(0), tile.x + tile.w + 8, tileY + 3, { role: 'mono', size: narrow ? 7.5 : 8.5, color: AM.col.mist, letterSpacing: '0.04em' });
+      D.text(g, narrow ? 'embedding' : 'token embedding → x' + sub(0), tile.x + tile.w + 8, tileY + 3, { role: 'mono', size: 8.5, color: AM.col.mist, letterSpacing: '0.04em' });
       // the mouth
-      D.text(g, narrow ? '↑ to unembedding' : '↑ to final LN + unembedding', riverX, narrow ? 13 : 16, { role: 'mono', size: narrow ? 7.5 : 8.5, align: 'center', color: AM.col.linenDim, letterSpacing: '0.04em' });
+      D.text(g, narrow ? '↑ to unembedding' : '↑ to final LN + unembedding', riverX, narrow ? 13 : 16, { role: 'mono', size: 8.5, align: 'center', color: AM.col.linenDim, letterSpacing: '0.04em' });
       // the update rule currently in force
       const m = st.replace;
       const fs = narrow ? 8.5 : 10.5;
       const fy = narrow ? 13 : 16;
       if (m < 0.98) D.text(g, 'x ← x + F(LN(x))', w - pad, fy, { role: 'mono', size: fs, align: 'right', color: GOLD, alpha: 1 - m });
       if (m > 0.02) D.text(g, 'x ← F(LN(x))', w - pad, fy, { role: 'mono', size: fs, align: 'right', color: AM.dye.madder, alpha: m });
-      D.text(g, m > 0.5 ? 'residual path cut' : 'residual: add', w - pad, fy + (narrow ? 12 : 15), { role: 'mono', size: narrow ? 7 : 8, align: 'right', color: AM.col.mist, letterSpacing: '0.08em' });
+      D.text(g, m > 0.5 ? 'residual path cut' : 'residual: add', w - pad, fy + (narrow ? 12 : 15), { role: 'mono', size: narrow ? 8.5 : 8, align: 'right', color: AM.col.mist, letterSpacing: '0.08em' });
       // dam bars where the river is cut
       if (m > 0.02) {
         g.save();
@@ -853,7 +847,7 @@
         for (let k = 0; k < 6; k++) {
           st.tgt.read[k] = k < S.read ? 1 : 0;
           st.tgt.write[k] = k < S.write ? 1 : 0;
-          st.tgt.focus[k] = k === S.focus ? 1 : 0;
+          st.tgt.focus[k] = (Array.isArray(S.focus) ? S.focus.includes(k) : k === S.focus) ? 1 : 0;
         }
         st.tgt.bus = S.bus ? 1 : 0;
         st.tgt.gate = S.gate ? 1 : 0;
@@ -1104,20 +1098,20 @@
         // value label
         const txt = narrow ? fmtS(v, 1) : fmtS(v, 2);
         const ly = v >= 0 ? Math.max(Lo.ay + 8, yv - 5) : Math.min(Lo.ay + ah - 2, yv + 12);
-        D.text(g, txt, cx, ly, { role: 'mono', size: narrow ? 7.5 : 8.5, align: 'center', color: AM.col.linenDim, alpha: 0.9 });
+        D.text(g, txt, cx, ly, { role: 'mono', size: 8.5, align: 'center', color: AM.col.linenDim, alpha: 0.9 });
       }
 
       // γ and β rows
-      const rowA = S.stage === 3 ? 1 : 0.38;
+      const rowA = S.stage === 3 ? 1 : 0.62;
       const rh = narrow ? 14 : 15;
       D.text(g, 'γ', ax - 8, rowsY + 9, { role: 'mono', size: narrow ? 9 : 10, align: 'right', color: AM.dye.weld, alpha: rowA });
       if (S.kind === 'ln') D.text(g, 'β', ax - 8, rowsY + rh + 9, { role: 'mono', size: narrow ? 9 : 10, align: 'right', color: AM.dye.weld, alpha: rowA });
       for (let i = 0; i < LN_N; i++) {
         const cx = ax + colW * (i + 0.5);
-        D.text(g, LN_GAMMA[i].toFixed(narrow ? 1 : 2), cx, rowsY + 9, { role: 'mono', size: narrow ? 7.5 : 8.5, align: 'center', color: AM.col.linenDim, alpha: rowA });
-        if (S.kind === 'ln') D.text(g, fmtS(LN_BETA[i], narrow ? 1 : 2), cx, rowsY + rh + 9, { role: 'mono', size: narrow ? 7.5 : 8.5, align: 'center', color: AM.col.linenDim, alpha: rowA });
+        D.text(g, narrow ? fmtTight(LN_GAMMA[i]) : LN_GAMMA[i].toFixed(2), cx, rowsY + 9, { role: 'mono', size: 8.5, align: 'center', color: AM.col.linenDim, alpha: rowA });
+        if (S.kind === 'ln') D.text(g, narrow ? fmtTight(LN_BETA[i]) : fmtS(LN_BETA[i], 2), cx, rowsY + rh + 9, { role: 'mono', size: 8.5, align: 'center', color: AM.col.linenDim, alpha: rowA });
       }
-      if (S.kind === 'rms') D.text(g, 'no β in RMSNorm', ax + aw / 2, rowsY + rh + 9, { role: 'mono', size: narrow ? 7.5 : 8.5, align: 'center', color: AM.col.mist, alpha: rowA });
+      if (S.kind === 'rms') D.text(g, 'no β in RMSNorm', ax + aw / 2, rowsY + rh + 9, { role: 'mono', size: 8.5, align: 'center', color: AM.col.mist, alpha: rowA });
 
       // stage title
       const names = narrow ? STAGE_SHORT[S.kind] : STAGE_NAMES[S.kind];
@@ -1224,201 +1218,6 @@
     ctx.loop((t, dt) => { if (!vis.on) return; tick(dt); draw(); });
   }
 
-  // ================================================================== FIGURE 3 — gradient highway
-  function buildHighway(ctx, parts) {
-    const { canvasHost, ctlHost, tileRes, tilePlain, note } = parts;
-    const W_D = 16;
-    const S = { L: 32, sigma: 0.7, seed: 3 };
-    let res = null, Lo = null;
-    const view = { lo: -8, hi: 2 };
-    const beads = { res: [], plain: [] };
-    for (let i = 0; i < 46; i++) { beads.res.push(Math.random()); beads.plain.push(Math.random()); }
-
-    const cv = ctx.canvas(canvasHost, {
-      label: 'Chart of gradient size at every layer of a deep stack, on a log scale. The gold thread (with residual connections) stays large all the way down to layer 0. The red thread (plain stack) shrinks by many powers of ten.',
-      height: (w) => (w < 520 ? 460 : Math.round(Math.min(600, Math.max(460, w * 1.02)))),
-    });
-    const vis = visibility(cv.wrap);
-
-    /** Real forward + backward pass through L random tanh layers (toy sizes).
-        plain:    x_l = tanh(W_l x_{l-1})
-        residual: x_l = x_{l-1} + tanh(W_l x_{l-1})
-        loss = c · x_L with |c| = 1, so the gradient arriving at the top has length 1.
-        Backward: g_{l-1} = W_lᵀ (tanh'(h_l) ⊙ g_l)        (plain)
-                  g_{l-1} = g_l + W_lᵀ (tanh'(h_l) ⊙ g_l)  (residual: the identity term) */
-    function compute() {
-      const r = MM.rng(1000 + S.seed);
-      const sc = S.sigma / Math.sqrt(W_D);
-      const Ws = [];
-      for (let l = 0; l < S.L; l++) Ws.push(randMat(r, W_D, W_D, 1).map((row) => row.map((v) => v * sc)));
-      const x0 = Array.from({ length: W_D }, () => MM.randn(r));
-      const c = Array.from({ length: W_D }, () => MM.randn(r));
-      const cn = Math.hypot(...c);
-      for (let i = 0; i < W_D; i++) c[i] /= cn;
-      const run = (residual) => {
-        const hs = [];
-        let x = x0.slice();
-        for (let l = 0; l < S.L; l++) {
-          const h = matVec(Ws[l], x);
-          hs.push(h);
-          x = residual ? x.map((v, i) => v + Math.tanh(h[i])) : h.map(Math.tanh);
-        }
-        const norms = new Array(S.L + 1);
-        let g = c.slice();
-        norms[S.L] = 1;
-        for (let l = S.L - 1; l >= 0; l--) {
-          const W = Ws[l], h = hs[l];
-          const gd = g.map((v, i) => { const t = Math.tanh(h[i]); return v * (1 - t * t); });
-          const back = new Array(W_D).fill(0);
-          for (let i = 0; i < W_D; i++) for (let j = 0; j < W_D; j++) back[j] += W[i][j] * gd[i];
-          g = residual ? g.map((v, j) => v + back[j]) : back;
-          norms[l] = Math.hypot(...g);
-        }
-        return norms;
-      };
-      res = { res: run(true), plain: run(false) };
-      const logs = [...res.res, ...res.plain].map((v) => Math.log10(Math.max(v, 1e-300)));
-      res.lo = Math.floor(Math.min(...logs) - 0.3);
-      res.hi = Math.max(1, Math.ceil(Math.max(...logs) + 0.3));
-      // readouts
-      tileRes.innerHTML = fmtMagHTML(res.res[0]);
-      tilePlain.innerHTML = fmtMagHTML(res.plain[0]);
-      const ratio = res.res[0] / Math.max(res.plain[0], 1e-300);
-      note.textContent = ratio > 10
-        ? `The skip path delivers about ${ratio >= 1000 ? '10' + sup(Math.round(Math.log10(ratio))) : Math.round(ratio)}× more gradient back to layer 0.`
-        : 'At this weight scale the plain stack survives too. Try a smaller σ or more layers.';
-    }
-
-    function layout(w, h) {
-      const narrow = w < 520;
-      return { w, h, narrow, left: narrow ? 40 : 54, right: narrow ? 12 : 20, top: narrow ? 46 : 54, bottom: narrow ? 54 : 60 };
-    }
-    const X = (lg) => Lo.left + ((lg - view.lo) / (view.hi - view.lo)) * (Lo.w - Lo.left - Lo.right);
-    const Y = (l) => Lo.top + ((S.L - l) / S.L) * (Lo.h - Lo.top - Lo.bottom);
-    const lgAt = (arr, l) => {
-      const i = Math.floor(l), f = l - i;
-      const a = Math.log10(Math.max(arr[Math.min(i, S.L)], 1e-300)), b = Math.log10(Math.max(arr[Math.min(i + 1, S.L)], 1e-300));
-      return a + (b - a) * f;
-    };
-
-    function drawThread(g, arr, color, glow) {
-      const pts = [];
-      for (let l = S.L; l >= 0; l--) pts.push([X(MM.clamp(Math.log10(Math.max(arr[l], 1e-300)), view.lo, view.hi)), Y(l)]);
-      const path = () => {
-        g.beginPath();
-        g.moveTo(pts[0][0], pts[0][1]);
-        for (let i = 1; i < pts.length - 1; i++) {
-          const mx = (pts[i][0] + pts[i + 1][0]) / 2, my = (pts[i][1] + pts[i + 1][1]) / 2;
-          g.quadraticCurveTo(pts[i][0], pts[i][1], mx, my);
-        }
-        g.lineTo(pts[pts.length - 1][0], pts[pts.length - 1][1]);
-      };
-      g.save();
-      g.lineCap = 'round'; g.lineJoin = 'round';
-      g.strokeStyle = AM.rgba(color, 0.12 * glow); g.lineWidth = 9; path(); g.stroke();
-      g.strokeStyle = AM.rgba(color, 0.25 * glow); g.lineWidth = 4; path(); g.stroke();
-      g.strokeStyle = AM.rgba(color, 0.95); g.lineWidth = 1.6; path(); g.stroke();
-      g.restore();
-    }
-
-    function draw(t) {
-      if (!Lo || !res) return;
-      const g = cv.g;
-      const { w, h, narrow, left, right, top, bottom } = Lo;
-      cv.clear();
-      const pw = w - left - right, ph = h - top - bottom;
-
-      // layer rungs (the warp of the stack)
-      g.save();
-      for (let l = 0; l <= S.L; l++) {
-        const y = Math.round(Y(l)) + 0.5;
-        g.strokeStyle = AM.rgba(AM.col.linen, l % 8 === 0 ? 0.08 : 0.035);
-        g.beginPath(); g.moveTo(left, y); g.lineTo(left + pw, y); g.stroke();
-        if (l % 8 === 0 || l === S.L) D.text(g, String(l), left - 8, y + 3, { role: 'mono', size: narrow ? 8 : 9, align: 'right', color: AM.col.mist });
-      }
-      // decade gridlines
-      const span = view.hi - view.lo;
-      const stepD = span > 24 ? 6 : span > 14 ? 4 : span > 7 ? 2 : 1;
-      for (let d = Math.ceil(view.lo); d <= Math.floor(view.hi); d++) {
-        if (d % stepD !== 0 && d !== 0) continue;
-        const x = Math.round(X(d)) + 0.5;
-        g.strokeStyle = AM.rgba(d === 0 ? AM.dye.weld : AM.col.linen, d === 0 ? 0.22 : 0.06);
-        g.setLineDash(d === 0 ? [3, 3] : []);
-        g.beginPath(); g.moveTo(x, top - 6); g.lineTo(x, top + ph); g.stroke();
-        g.setLineDash([]);
-        D.text(g, d === 0 ? '1' : '10' + sup(d), x, top + ph + 16, { role: 'mono', size: narrow ? 8 : 9, align: 'center', color: d === 0 ? AM.dye.weld : AM.col.mist });
-      }
-      g.restore();
-      D.text(g, 'gradient size at each layer  (log scale) →', left + pw, h - 10, { role: 'mono', size: narrow ? 7.5 : 8.5, align: 'right', color: AM.col.mist, letterSpacing: '0.04em' });
-      D.text(g, 'LAYER', left - 8, top - 16, { role: 'mono', size: narrow ? 7.5 : 8.5, align: 'right', color: AM.col.mist, letterSpacing: '0.08em' });
-
-      // the loss at the top, where the gradient starts with size 1
-      const x1 = X(0), yTop = Y(S.L);
-      D.glowDot(g, x1, yTop - 16, 3.2, AM.dye.weld, 0.9 + 0.1 * Math.sin(t * 3));
-      const rightSide = x1 > w * 0.6;
-      D.text(g, 'loss: gradient of size 1 enters here', x1 + (rightSide ? -12 : 12), yTop - 13, { role: 'mono', size: narrow ? 7.5 : 8.5, color: AM.col.linenDim, align: rightSide ? 'right' : 'left', letterSpacing: '0.02em' });
-
-      drawThread(g, res.plain, AM.dye.madder, 0.8);
-      drawThread(g, res.res, AM.dye.weld, 1);
-
-      // beads flowing down: brightness follows the gradient size (dim = vanishing)
-      g.save();
-      g.globalCompositeOperation = 'lighter';
-      const drawBeads = (arr, list, color) => {
-        const spr = sprite(color);
-        for (let i = 0; i < list.length; i++) {
-          const u = list[i];
-          const l = S.L * (1 - u);
-          const lg = lgAt(arr, l);
-          const a = MM.clamp(1 + lg / 5, 0.02, 1);
-          const s = (narrow ? 9 : 11) * (0.55 + 0.45 * a);
-          g.globalAlpha = 0.85 * a * MM.clamp(u / 0.04, 0, 1);
-          g.drawImage(spr, X(MM.clamp(lg, view.lo, view.hi)) - s / 2, Y(l) - s / 2, s, s);
-        }
-      };
-      drawBeads(res.plain, beads.plain, AM.dye.madder);
-      drawBeads(res.res, beads.res, AM.dye.weld);
-      g.restore();
-
-      // end labels at layer 0
-      const yb = Y(0);
-      const xr = X(MM.clamp(Math.log10(res.res[0]), view.lo, view.hi));
-      const xp = X(MM.clamp(Math.log10(Math.max(res.plain[0], 1e-300)), view.lo, view.hi));
-      D.glowDot(g, xr, yb, 2.6, AM.dye.weld, 1);
-      D.glowDot(g, xp, yb, 2.6, AM.dye.madder, 0.9);
-      const lr = fmtMag(res.res[0]), lp = fmtMag(res.plain[0]);
-      const close = Math.abs(xr - xp) < 70;
-      D.text(g, lr, xr + (xr > w - 70 ? -8 : 8), yb - 8, { role: 'mono', size: narrow ? 8.5 : 9.5, color: AM.dye.weld, align: xr > w - 70 ? 'right' : 'left' });
-      D.text(g, lp, xp + (xp < left + 60 ? 8 : -8), yb + (close ? 14 : -8), { role: 'mono', size: narrow ? 8.5 : 9.5, color: AM.dye.madder, align: xp < left + 60 ? 'left' : 'right' });
-    }
-
-    function tick(dt) {
-      if (!res) return;
-      const a = 1 - Math.exp(-dt * 4);
-      view.lo += (res.lo - view.lo) * a;
-      view.hi += (res.hi - view.hi) * a;
-      const sp = 0.075 * dt;
-      for (const k of ['res', 'plain']) {
-        const list = beads[k];
-        for (let i = 0; i < list.length; i++) { list[i] += sp * (0.85 + 0.3 * ((i * 37) % 10) / 10); if (list[i] > 1) list[i] -= 1; }
-      }
-    }
-
-    // controls
-    const ui = AM.ui;
-    const depth = ui.slider({ id: 'gh-depth', label: 'LAYERS', min: 8, max: 64, step: 4, value: S.L, format: (v) => String(v), onInput: (v) => { S.L = v; compute(); } });
-    const sig = ui.slider({ id: 'gh-sigma', label: 'WEIGHT SCALE σ', min: 0.3, max: 1.5, step: 0.05, value: S.sigma, format: (v) => v.toFixed(2), onInput: (v) => { S.sigma = v; compute(); } });
-    const reseed = ui.button({ id: 'gh-reseed', label: 'New random weights', onClick: () => { S.seed++; compute(); } });
-    ctlHost.append(depth.el, sig.el, reseed);
-
-    cv.onResize((w, h) => {
-      Lo = layout(w, h);
-      if (!res) { compute(); view.lo = res.lo; view.hi = res.hi; }
-      draw(performance.now() / 1000);
-    });
-    ctx.loop((t, dt) => { if (!vis.on) return; tick(dt); draw(t); });
-  }
-
   // ================================================================== chapter
   AM.chapter({
     id: ID,
@@ -1451,7 +1250,7 @@
       const stage = el('div', { class: 'ch-stage rs-stage' },
         el('figure', { class: 'fig' },
           el('div', { class: 'fig-top' },
-            el('span', { class: 'fig-title' }, 'One token, three blocks'),
+            el('span', { class: 'fig-title' }, el('span', { class: 'rs-long' }, 'One token, three blocks'), el('span', { class: 'rs-short' }, 'Three blocks')),
             el('span', { class: 'rs-badges' }, ui.badge('illustration'), ui.badge('toy'))),
           riverHost,
           el('div', { class: 'controls' }, toggle.el, hint),
@@ -1470,19 +1269,17 @@
           'A sublayer starts by taking a copy of the stream and passing it through <span class="term">LayerNorm</span>, which rescales the copy to a standard size. The sublayer works on that copy.',
           'Reading takes nothing away. The river flows on past the gate untouched.'),
         step('3 · Write', 'Writing by addition',
-          'The attention sublayer gathers information from other positions and returns a vector the same size as the stream. That vector is <strong>added</strong> to the stream:',
-          '<div class="math block">x ← x + Attention(LN(x))</div>',
-          'Watch the strip on the left, from bottom to top. The blue barcode at the seam is the vector that was added. It nudges each of the 16 numbers a little, and everything that was there before is still there.'),
-        step('4 · A block', 'The MLP does the same',
-          '<div class="math block">x ← x + MLP(LN(x))</div>',
-          'One attention sublayer followed by one MLP sublayer makes a transformer block. Putting LayerNorm in front of each sublayer like this is called <span class="term">pre-LN</span>. GPT-2 and most models since are built this way.'),
-        step('5 · A shared bus', 'A channel every layer can read',
+          'Each sublayer returns a vector the same size as the stream, and that vector is <strong>added</strong> to it. Attention writes first, then the MLP:',
+          '<div class="math block">x ← x + Attention(LN(x))<br>x ← x + MLP(LN(x))</div>',
+          'The pair makes one <span class="term">transformer block</span>. Putting LayerNorm in front of each sublayer like this is called <span class="term">pre-LN</span>; GPT-2 and most models since are built this way.',
+          'Watch the strip on the left, from bottom to top. Each barcode at a seam is the vector that sublayer added. It nudges each of the 16 numbers a little, and everything that was there before is still there.'),
+        step('4 · A shared bus', 'A channel every layer can read',
           'Stack three blocks and the stream carries a running sum: the token\'s own embedding plus every edit written so far. A sublayer high up can read what one far below wrote. The blue thread marks the third attention sublayer reading the dye the first one poured in.',
           'Interpretability researchers think of the residual stream as a communication channel. Layers talk to each other by writing to it and reading from it.'),
-        step('6 · Without the residual', 'Now replace instead of add',
+        step('5 · Without the residual', 'Now replace instead of add',
           'Each sublayer now overwrites the stream: <span class="math">x ← F(LN(x))</span>. The switch under the picture does the same thing at any step.',
-          `The gold is gone after the first sublayer. In the toy stream, the cosine similarity between the top vector and the original embedding falls from <strong>${fmtS(cosAdd, 2)}</strong> to <strong>${fmtS(cosRep, 2)}</strong>. Other random weights tell the same story: usually 0.6 to 0.8 with the residual path, and near zero without it.`,
-          'Every layer would now have to carry forward everything useful by itself.'),
+          `The gold is gone after the first sublayer. In the toy stream, the cosine similarity between the top vector and the original embedding falls from <strong>${fmtS(cosAdd, 2)}</strong> to <strong>${fmtS(cosRep, 2)}</strong>. Other random weights tell the same story. With the residual path the similarity usually lands between 0.5 and 0.85; without it, it scatters around zero, mostly within ±0.3.`,
+          'Every layer would now have to carry forward everything useful by itself. The straight path also helps training: the learning signal can flow back down it to the earliest layers without fading (chapter 10).'),
       ];
       const prose = el('div', { class: 'ch-prose' }, steps);
       body.appendChild(el('div', { class: 'ch-split' }, stage, prose));
@@ -1491,8 +1288,9 @@
       river = buildRiver(ctx, riverHost, toy);
       ctx.steps(steps, (i) => {
         river.setStep(i);
-        toggle.set(i !== 5);
-        setHint(i !== 5);
+        const add = !(RIVER_STEPS[i] && RIVER_STEPS[i].replace);
+        toggle.set(add);
+        setHint(add);
       });
 
       // ---------------------------------------------------------------- 2. LayerNorm stepper
@@ -1505,59 +1303,18 @@
           el('h3', { id: 'rs-ln-h' }, 'LayerNorm, one step at a time'),
           el('p', { html: 'LayerNorm works on one token\'s vector at a time. It subtracts the vector\'s mean, divides by its standard deviation, then applies a learned scale <span class="math">γ</span> and shift <span class="math">β</span> to each dimension:' }),
           el('div', { class: 'math block' }, 'LN(x) = γ ⊙ (x − μ) / √(σ² + ε) + β'),
-          el('p', { html: 'Here μ and σ are the mean and standard deviation of the d numbers in <span class="math">x</span>, and ε is a tiny constant that prevents division by zero. The result has a stable range whatever the stream looks like, and it does not depend on the stream\'s overall scale. Step through it, drag the bars, then press <strong>Scale input ×10</strong> while step 4 is showing.' })),
+          el('p', { html: 'Here μ and σ are the mean and standard deviation of the d numbers in <span class="math">x</span>, and ε is a tiny constant that prevents division by zero. The result has a stable range whatever the stream looks like, and it does not depend on the stream\'s overall scale. Step through it, drag the bars, then press <strong>Scale input ×10</strong> while step 4 is showing.' }),
+          el('p', { html: 'Many recent models, LLaMA among them, use a cheaper cousin called <span class="term">RMSNorm</span>. It skips the mean and the shift β; switch the stepper to it and a shift of the input now gets through. Where the norm sits matters too. The 2017 original normalised after the add (post-LN), which is harder to train than the pre-LN layout above.' })),
         el('div', { class: 'panel' },
           ui.figure({ title: 'LayerNorm stepper · 12 numbers', badge: 'toy', caption: 'A hand-picked 12-number vector with hand-picked γ and β (a freshly initialised model starts at γ = 1, β = 0). Every number shown is computed exactly, with ε = 10⁻⁵ and the population variance (divide by d), as LayerNorm uses. Click, tap or drag a bar to change the input; the dashed outline is the input while later steps are shown.' },
             el('div', { class: 'ln-grid' }, el('div', { class: 'ln-left' }, lnCanvas, lnCtl), lnRead))));
       body.appendChild(lnSec);
       buildLayerNorm(ctx, { canvasHost: lnCanvas, readHost: lnRead, ctlHost: lnCtl, verdictHost: lnRead });
 
-      // where the norm sits: a quick map of variants
-      body.appendChild(el('div', { class: 'grid-3' },
-        el('div', { class: 'rs-card' },
-          el('h4', {}, 'Post-LN · 2017'),
-          el('span', { class: 'math' }, 'x ← LN(x + F(x))'),
-          el('p', {}, 'The original Transformer normalised after the add, so the stream itself was renormalised at every step. Deep post-LN stacks are touchy to train and usually need a careful learning-rate warm-up.')),
-        el('div', { class: 'rs-card' },
-          el('h4', {}, 'Pre-LN · GPT-2 and later'),
-          el('span', { class: 'math' }, 'x ← x + F(LN(x))'),
-          el('p', {}, 'Only the copy going into each sublayer is normalised, so the identity path stays clean from bottom to top. One final LayerNorm sits just before the unembedding.')),
-        el('div', { class: 'rs-card' },
-          el('h4', {}, 'RMSNorm · LLaMA and others'),
-          el('span', { class: 'math' }, 'RMSNorm(x) = γ ⊙ x / √(mean(x²) + ε)'),
-          el('p', {}, 'Skips the mean subtraction and the shift β. It is a little cheaper and works about as well in practice. It sits in the same pre-LN position. Try it in the stepper: scaling still has no effect, but a shift now gets through.'))));
-
-      // ---------------------------------------------------------------- 3. gradient highway
-      const ghCanvas = el('div');
-      const ghCtl = el('div', { class: 'controls' });
-      const tileRes = el('span', { class: 'gh-num' }, '–');
-      const tilePlain = el('span', { class: 'gh-num' }, '–');
-      const note = el('p', { class: 'gh-note', 'aria-live': 'polite' });
-      const ghSec = el('section', { class: 'ch-wide gh-grid', 'aria-labelledby': 'rs-gh-h' },
-        el('div', { class: 'prose' },
-          el('span', { class: 'rs-kicker' }, 'Why it trains'),
-          el('h3', { id: 'rs-gh-h' }, 'The gradient highway'),
-          el('p', { html: 'Training sends an error signal backwards through the stack. Each layer multiplies it by that layer\'s local slopes (its Jacobian), and in a deep stack those factors compound. The signal can shrink to almost nothing before it reaches the early layers: the <span class="term">vanishing gradient</span> problem.' }),
-          el('p', { html: 'A residual connection gives the backward pass a second route. Since <span class="math">x<sub>l</sub> = x<sub>l−1</sub> + f(x<sub>l−1</sub>)</span>, the gradient at layer l−1 is the gradient at layer l <strong>plus</strong> whatever comes back through f. The identity term copies the signal straight down. He et al. used this in 2015 to train image networks over a hundred layers deep.' }),
-          el('p', { html: 'It also makes each layer\'s job easier. A layer only has to learn a small edit to the stream, and doing nothing is a fine place to start.' })),
-        el('div', { class: 'panel' },
-          ui.figure({ title: 'Backprop through a deep stack', badge: 'toy', caption: 'Toy numbers, real computation: each layer is x ← tanh(Wx) with a random 16×16 matrix W (entries with standard deviation σ/4), and the residual version is x ← x + tanh(Wx). Same weights for both. The gradient entering the top has size 1. There is no LayerNorm here, to isolate the skip path. The residual gradient also grows with depth in this toy: a little at the default settings, and to the hundreds at σ = 1.5 with 64 layers. Real models keep that in check with normalisation and small initial weights on each branch.' },
-            ui.legend([{ color: AM.dye.weld, label: 'with residual connections' }, { color: AM.dye.madder, label: 'plain stack' }]),
-            ghCanvas)),
-        el('div', { class: 'gh-side' },
-          el('span', { class: 'gh-head' }, 'Gradient reaching layer 0'),
-          el('div', { class: 'gh-tiles' },
-            el('div', { class: 'gh-tile is-res' }, el('span', { class: 'gh-lab' }, 'With residual'), tileRes),
-            el('div', { class: 'gh-tile is-plain' }, el('span', { class: 'gh-lab' }, 'Plain stack'), tilePlain)),
-          note,
-          ghCtl));
-      body.appendChild(ghSec);
-      buildHighway(ctx, { canvasHost: ghCanvas, ctlHost: ghCtl, tileRes, tilePlain, note });
-
       // ---------------------------------------------------------------- key idea
       body.appendChild(el('div', { class: 'callout' },
         el('span', { class: 'callout-label' }, 'Key idea'),
-        el('p', { html: 'The <strong>residual stream</strong> is the backbone of the transformer: one vector per token, carried from the embedding to the output. Sublayers read it through <strong>LayerNorm</strong> and write to it by <strong>addition</strong>, so every edit accumulates and gradients have a straight path back down to the earliest layers.' })));
+        el('p', { html: 'The <strong>residual stream</strong> is the backbone of the transformer: one vector per token, carried from the embedding to the output. Sublayers read it through <strong>LayerNorm</strong> and write to it by <strong>addition</strong>, so every edit accumulates and any layer can read what an earlier one wrote.' })));
     },
   });
 })();

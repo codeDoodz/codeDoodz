@@ -44,6 +44,10 @@ explaining at a whiteboard. No hype, no "delve", no em-dash asides, no
 - `toy` — "TOY NUMBERS": small hand-built vectors chosen to show the mechanism.
 - `illustration` — "ILLUSTRATION": artistic depiction, not literal numbers.
 
+The canonical label always shows. A qualifier goes in the second argument and is
+drawn after a thin divider in mist: `AM.ui.badge('toy', 'exact formula')` →
+"TOY NUMBERS | exact formula". Never replace the label with free text.
+
 Never present toy numbers as if they came from a real model.
 
 ## 2. Files
@@ -94,9 +98,25 @@ AM.chapter({
   on screen** (t in seconds since mount, dt seconds). Respect
   `AM.reducedMotion`: when true, loops are still called but at ~2 fps; design
   so a single frame reads well.
+- `ctx.step({label, title, html | body})` → a step card in the house layout:
+  "`n · label`" micro label, an `h3` title (always give one) and the body. `n`
+  counts up per chapter (pass `n` to set it). Use it for every step.
+- `ctx.subhead(eyebrow, title, lead?)` → the opening of a section after the
+  scrollytelling: gold mono eyebrow + Figtree `h3` (+ optional lead paragraph).
+  Use it for every second-level section (free play, side topics).
 - `ctx.steps(stepEls, onStep)` → scrollytelling: calls `onStep(i)` when the
   i-th step element reaches mid-screen.
-- `ctx.onVisible(fn)` / `ctx.onHidden(fn)`.
+  When the split is stacked (≤900px, stage sticky on top) a step activates only
+  once its top edge has cleared the stage.
+- `ctx.onVisible(fn)` / `ctx.onHidden(fn)`. The section also carries the class
+  `is-onscreen` while visible (CSS animations can key off it).
+- `ctx.canvas(..., {maxHeight: 'stage'})` keeps the whole sticky stage within
+  `--stage-max` (half the screen, at most 560px) when the split is stacked. Use
+  it for stage canvases; tall stages leave no room to read the steps.
+
+Mount order: the hero mounts at once, then one chapter per task in page order
+(deep links and in-page link clicks build what they need first). Never assume
+another chapter is already mounted. `AM.whenMounted` resolves when all are.
 
 Layouts provided by `base.css` (compose them, don't reinvent):
 - `.ch-body` — content wrapper (max ~1180px).
@@ -108,7 +128,17 @@ Layouts provided by `base.css` (compose them, don't reinvent):
 - `.panel` — a framed instrument panel (use sparingly: one per figure).
 - `.controls` — row of controls under a stage. `.caption` — figure caption.
 - `.math` — inline formula styling (mono). `.kbd`, `.term` (defined term).
-- `.callout` — aside box. `.grid-2`, `.grid-3` — responsive grids.
+- `.callout` — aside box (the "Key idea"), kept to the prose measure.
+  `.grid-2`, `.grid-3` — responsive grids.
+- `.subhead` (see `ctx.subhead`). Headings: `h3` is Figtree `--fs-h3`; the one
+  `h4` role is Figtree 17px semibold (`.prose h4`, `.step h4`, `.panel h4`).
+  Do not restyle them per chapter.
+- Figures: `AM.ui.figure({title, badge, caption, framed})`. Frame (`framed:
+  true`) every sticky stage and every free-play figure: the title row sits
+  outside, the body gets the `--ink-2` frame. Inline diagrams inside prose stay
+  unframed. Do not wrap a framed figure in `.panel`.
+- Example pickers ("try this sentence"): `AM.ui.chips(options, {onPick,
+  selected})` → `.chip` pills. Use them instead of chapter-made chips.
 
 ## 4. Rules for visuals
 
@@ -127,9 +157,16 @@ Layouts provided by `base.css` (compose them, don't reinvent):
    are lower-triangular (query i sees keys ≤ i). √d_k scaling is applied.
 7. **Accessible.** Canvas figures get `role="img"` + `aria-label` describing
    what is shown. Text contrast ≥ 4.5:1 on `--ink`.
-8. **No external fetches.** No images from the web, no fetch/XHR. Fonts come
-   from Google Fonts (already linked). Everything else is inline.
-9. **No new globals** except your chapter registration. Wrap your file in an
+8. **Legible canvas text.** `D.text`, `D.measure` and `D.token` never draw
+   below `AM.minText` (8px, 8.5px on touch screens). Fit labels with shorter
+   strings, not smaller type; pass `{minSize: 0}` only for decorative text.
+   Text drawn with `AM.font` directly, or under a scaling transform, must follow
+   the same floor.
+9. **No external fetches.** No images from the web, no fetch/XHR. Fonts come
+   from Google Fonts (already linked, loaded without blocking the first paint).
+   Everything else is inline. Canvases redraw when the fonts arrive; code that
+   caches text measurements should re-measure when `AM.fontsReady` settles.
+10. **No new globals** except your chapter registration. Wrap your file in an
    IIFE: `(() => { ... })();`.
 
 ## 5. Testing your chapter

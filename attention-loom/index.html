@@ -7,8 +7,9 @@
 <meta name="description" content="An illustrated, interactive journey inside a transformer, powered by a real tiny transformer running in your browser.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400..900;1,6..96,400..900&family=Figtree:ital,wght@0,400..700;1,400..700&family=Martian+Mono:wght@300..600&display=swap">
 <link rel="stylesheet" href="css/base.css">
+<!-- Web fonts load without blocking the first paint (media flips to "all" on load; am.js has a fallback). -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400..900;1,6..96,400..900&family=Figtree:ital,wght@0,400..700;1,400..700&family=Martian+Mono:wght@300..600&display=swap" media="print" onload="this.media='all'" data-am-fonts>
 </head>
 <body>
 <main class="page" id="top">
@@ -17,7 +18,7 @@
     <div class="hero-inner">
       <p class="hero-eyebrow">An interactive journey inside a transformer</p>
       <h1 class="hero-title" id="hero-title">The Attention <em>Loom</em></h1>
-      <p class="hero-sub">Every chatbot you have talked to runs on the same machine. Scroll to watch a transformer take a sentence apart, weave its words together with attention, and guess what comes next. Nearly everything here moves, and much of it is computed live by a real, tiny transformer trained for this page.</p>
+      <p class="hero-sub">Almost every chatbot you have talked to runs on the same kind of machine. Scroll to watch a transformer take a sentence apart, weave its words together with attention, and guess what comes next. Nearly everything here moves, and much of it is computed live by a real, tiny transformer trained for this page.</p>
     </div>
   </section>
 
@@ -37,7 +38,7 @@
   <section class="chapter" data-chapter="epilogue" id="ch-epilogue"></section>
 
   <footer class="colophon">
-    <p><strong>The Attention Loom.</strong> Hand-built with vanilla JavaScript, Canvas and a lot of thread. No libraries, no tracking, no network calls.</p>
+    <p><strong>The Attention Loom.</strong> Hand-built with vanilla JavaScript, Canvas and a lot of thread. No libraries and no tracking. The only network requests fetch the web fonts from Google Fonts.</p>
     <p>The live model is a small decoder-only transformer trained from scratch in this repository on a toy world of sentences. Its weights ship with the page and every forward pass runs in your browser.</p>
     <p>Further reading: Vaswani et al., <a href="https://arxiv.org/abs/1706.03762" target="_blank" rel="noopener">Attention Is All You Need</a> (2017) · Elhage et al., <a href="https://transformer-circuits.pub/2021/framework/index.html" target="_blank" rel="noopener">A Mathematical Framework for Transformer Circuits</a> (2021).</p>
   </footer>

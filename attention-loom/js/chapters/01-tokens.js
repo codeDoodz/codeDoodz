@@ -10,7 +10,7 @@
      2. BPE               training, encoding, tracing merges
      3. glyph drawing     shared token-tile renderer for every canvas
      4. hero              the shattering glass strip
-     5. stage scenes      five scrollytelling scenes
+     5. stage scenes      five scrollytelling scenes (the last card shows two)
      6. workshop          the free-play merge loom
      7. chapter mount     DOM, CSS, wiring                                   */
 (() => {
@@ -1003,7 +1003,7 @@
     ];
     function itemW(kind, i, s) {
       if (kind === 'char') return (chars[i] === ' ' ? s * 0.55 : tw(chars[i], FONT.body(s))) + s * 0.6;
-      if (kind === 'word') return (words[i].unk ? tw('[UNK]', FONT.mono(s * 0.74)) : tw(words[i].w, FONT.body(s))) + s * 0.84;
+      if (kind === 'word') return (words[i].unk ? tw('<unk>', FONT.mono(s * 0.74)) : tw(words[i].w, FONT.body(s))) + s * 0.84;
       return tileW(bpe[i], s);
     }
     return {
@@ -1069,7 +1069,7 @@
               if (R.kind === 'char') {
                 if (chars[i] === ' ') spaceMark(g, it.x + R.s * 0.3, cy, R.s * 0.55, R.s, AM.dye.weld, 0.8);
                 else D.text(g, chars[i], it.x + it.w / 2, cy + R.s * 0.05, { size: R.s, weight: 600, align: 'center', baseline: 'middle', color: AM.col.linenDim });
-              } else if (unk) D.text(g, '[UNK]', it.x + it.w / 2, cy + 1, { size: R.s * 0.74, role: 'mono', align: 'center', baseline: 'middle', color: AM.dye.madder });
+              } else if (unk) D.text(g, '<unk>', it.x + it.w / 2, cy + 1, { size: R.s * 0.74, role: 'mono', align: 'center', baseline: 'middle', color: AM.dye.madder });
               else D.text(g, words[i].w, it.x + it.w / 2, cy + R.s * 0.05, { size: R.s, weight: 600, align: 'center', baseline: 'middle', color: AM.col.linen });
               g.restore();
             }
@@ -2046,13 +2046,13 @@
       const heroInput = el('input', { type: 'text', class: 'text-input', id: 'tk-hero-text', maxlength: '90', value: HERO_DEFAULT, 'aria-label': 'Sentence to shatter', spellcheck: 'false', autocomplete: 'off' });
       const heroBtn = ui.button({ id: 'tk-hero-go', label: 'Shatter', kind: 'primary' });
       const idsLine = el('p', { class: 'tk-ids', 'aria-live': 'polite' });
-      const heroBadge = ui.badge('illustration', 'Illustration · toy-BPE IDs');
-      heroBadge.title = 'The glass is decorative. The cut points and ID numbers come from the real BPE tokenizer trained on this page.';
+      const heroBadge = ui.badge('toy', 'Real BPE · toy corpus');
+      heroBadge.title = 'A real byte-level BPE tokenizer, trained in your browser on the short story used throughout this chapter. The glass is decoration; the cut points and ID numbers are real.';
       const heroFig = ui.figure({
         title: 'Shatter a sentence',
         badge: heroBadge,
         cls: 'tk-hero',
-        caption: `The cracks fall exactly on the token boundaries chosen by the tokenizer trained further down this page. ${SP} marks a space. Most tokenizers glue a word’s leading space onto the word: “${SP}loom” is one token (ID ${idOf(' loom').join('')}), while “loom” with no space before it becomes ${idOf('loom').length} tokens. GPT-2’s tokenizer prints that space as Ġ and SentencePiece prints it as ▁; we use the open-box symbol because it is easier to read. Tap the glass, or type your own sentence.`,
+        caption: `The cracks fall exactly on the token boundaries chosen by the tokenizer trained further down this page. ${SP} marks a space. Most tokenizers glue a word’s leading space onto the word: “${SP}loom” is one token (ID ${idOf(' loom').join('')}), while “loom” with no space before it becomes ${idOf('loom').length} tokens. Tap the glass, or type your own sentence.`,
       }, heroHost, el('div', { class: 'tk-hero-ctl' }, heroInput, heroBtn), idsLine);
 
       const body = el('div', { class: 'ch-body' });
@@ -2082,12 +2082,16 @@
       const stageFig = el('figure', { class: 'fig tk-stage-fig' }, el('div', { class: 'fig-top' }, stageTitle, stageBadge), stageCanvasHost);
       const stage = el('div', { class: 'ch-stage' }, stageFig);
       const [idThe] = idOf(' the');
+      // how many words the live model knows (its vocabulary minus <pad>, <unk>, '.' and ',')
+      let liveWords = 134;
+      try { const m = AM.model && AM.model.get('tinyworld'); if (m) liveWords = m.vocab.filter((w) => /^[a-z]+$/.test(w)).length; } catch (_) { /* keep the documented count */ }
       const strawIds = idOf(' strawberry');
       const steps = [
         { label: '1 · How fine to cut', html: `
           <h3>Letters are too fine, words too coarse</h3>
           <p>Feed a model single characters and every sentence becomes a long sequence. Attention compares every token with every other token, so the work grows with the square of the length. The gold beads read one token per step.</p>
-          <p>Use whole words instead and the vocabulary never ends. Any word missing from it, like <em>hummed</em> here, collapses into an unknown <code>[UNK]</code>. <strong>Subword</strong> tokens sit in between: common words stay whole, rare ones are assembled from pieces.</p>` },
+          <p>Use whole words instead and the vocabulary never ends. Any word missing from it, like <em>hummed</em> here, collapses into an unknown <code>&lt;unk&gt;</code>. <strong>Subword</strong> tokens sit in between: common words stay whole, rare ones are assembled from pieces.</p>
+          <p>The tiny transformer on this page takes the whole-word route. That works because its toy world has only ${liveWords} words; any other word becomes <code>&lt;unk&gt;</code>.</p>` },
         { label: '2 · Learning the pieces', html: `
           <h3>Byte-Pair Encoding: merge the most frequent pair</h3>
           <p>Start with every word spelled as raw bytes. There are only 256 possible bytes, so nothing is ever unknown. Count every adjacent pair inside each word, across the whole corpus, then merge the most frequent pair into a new token and repeat. Each merge adds one entry to the vocabulary.</p>
@@ -2096,19 +2100,23 @@
           <h3>Replay the merges, in order</h3>
           <p>Training happens once. To tokenize new text, split it into words, spell each word as bytes, then keep applying the learned merge with the lowest rank (the one learned earliest) until none applies. Each merge here twists two strands into one yarn.</p>
           <p>${chip(SP + 'weavers')} is common enough to end as one token. ${chip(SP + 'looming')} never appeared in the story, so it comes out as ${chip(SP + 'loom')} + ${chip('ing')}, two pieces the model knows well.</p>` },
-        { label: '4 · A blind spot', html: `
-          <h3>How many r’s are in strawberry?</h3>
-          <p>Chatbots famously stumble on this. They never see the letters. Our toy tokenizer turns ${chip(SP + 'strawberry')} into ${strawIds.length === 2 ? 'two' : strawIds.length} IDs, ${strawIds.join(' and ')}. GPT-4’s tokenizer cuts “strawberry”, with no space before it, into three: <em style="white-space:nowrap">str · aw · berry</em>.</p>
-          <p>To count letters, a model must have learned the spelling of each token as a separate fact, and then count across pieces. Spelling, rhyming and reversing words are hard for the same reason.</p>` },
-        { label: '5 · Rough edges', html: `
-          <h3>Odd numbers, expensive languages</h3>
-          <p>Digits are merged wherever the corpus happened to repeat them. The story mentions 1804 twice, so ${chip(SP + '1804')} is a single token, while 1805 becomes ${chip(SP + '180')} + ${chip('5')} and 2025 falls apart into digits. That patchiness is one reason arithmetic is awkward for language models; some tokenizers now split numbers into single digits, or into groups of up to three digits.</p>
-          <p>Scripts the tokenizer rarely saw fall back to raw bytes: the Japanese 布 costs three tokens for one character. Production tokenizers train on many languages, so the gap is smaller than here, but the same text usually costs more tokens outside English.</p>` },
+        { label: '4 · Blind spots', html: `
+          <h3>Where tokens get in the way</h3>
+          <p>How many r’s are in strawberry? Chatbots famously stumble on this, because they never see the letters. Our toy tokenizer turns ${chip(SP + 'strawberry')} into ${strawIds.length === 2 ? 'two' : strawIds.length} IDs, ${strawIds.join(' and ')}; GPT-4’s tokenizer cuts it, without the space, into <em style="white-space:nowrap">str · aw · berry</em>. To count letters, a model must have learned each token’s spelling as a separate fact. Spelling, rhyming and reversing words are hard for the same reason.</p>
+          <p data-scene="edges">Numbers split wherever the corpus happened to repeat digits. The story mentions 1804 twice, so ${chip(SP + '1804')} is one token, while 1805 becomes ${chip(SP + '180')} + ${chip('5')} and 2025 falls apart into digits. That patchiness is one reason arithmetic is awkward for language models; some tokenizers now split numbers into single digits, or groups of up to three.</p>
+          <p>Scripts the tokenizer rarely saw fall back to raw bytes: the Japanese 布 costs three byte tokens for one character (four with the space before it, as in the figure). Production tokenizers train on many languages, so the gap is smaller, but the same text usually costs more tokens outside English.</p>` },
       ];
       const stepEls = steps.map((s) => el('div', { class: 'step' }, el('div', { class: 'step-label' }, s.label), el('div', { html: s.html, style: { display: 'grid', gap: '12px' } })));
       body.appendChild(el('div', { class: 'ch-split' }, stage, el('div', { class: 'ch-prose' }, stepEls)));
       const st = buildStage(ctx, stageCanvasHost, stageTitle);
-      ctx.steps(stepEls, (i) => st.set(i));
+      // the last card covers two scenes: strawberry first, then numbers and scripts once its
+      // second paragraph reaches the reading line (the card itself stays highlighted throughout)
+      const last = stepEls[stepEls.length - 1];
+      const edgesMark = last.querySelector('[data-scene="edges"]');
+      ctx.steps(edgesMark ? [...stepEls, edgesMark] : stepEls, (i) => {
+        st.set(i);
+        if (edgesMark) last.classList.toggle('is-active', i >= stepEls.length - 1);
+      });
 
       // ------------------------------------------------ workshop
       body.appendChild(el('div', { class: 'prose', html: `

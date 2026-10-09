@@ -17,10 +17,15 @@
     g.closePath();
   };
 
-  /** Text helper. opts: {size, role:'body'|'mono'|'display', weight, italic, color, align, baseline, alpha, maxWidth} */
+  /** Text size after the legibility floor (AM.minText). o.minSize overrides the floor
+      for one call; {minSize: 0} opts out. */
+  const floorSize = (size, minSize) => Math.max(size, minSize != null ? minSize : (AM.minText || 0));
+  D.textSize = (size = 14, o = {}) => floorSize(size, o.minSize);
+
+  /** Text helper. opts: {size, role:'body'|'mono'|'display', weight, italic, color, align, baseline, alpha, maxWidth, minSize} */
   D.text = (g, str, x, y, o = {}) => {
     g.save();
-    g.font = AM.font(o.size || 14, o.role || 'body', o.weight, o.italic);
+    g.font = AM.font(floorSize(o.size || 14, o.minSize), o.role || 'body', o.weight, o.italic);
     g.fillStyle = o.color || AM.col.linen;
     g.textAlign = o.align || 'left';
     g.textBaseline = o.baseline || 'alphabetic';
@@ -30,9 +35,9 @@
     g.restore();
   };
 
-  /** Measure text width for a font role/size. */
-  D.measure = (g, str, size = 14, role = 'body', weight) => {
-    g.save(); g.font = AM.font(size, role, weight); const w = g.measureText(str).width; g.restore(); return w;
+  /** Measure text width for a font role/size (same floor as D.text; minSize as there). */
+  D.measure = (g, str, size = 14, role = 'body', weight, minSize) => {
+    g.save(); g.font = AM.font(floorSize(size, minSize), role, weight); const w = g.measureText(str).width; g.restore(); return w;
   };
 
   /** Soft glowing dot (a bead of light). */
@@ -104,7 +109,7 @@
    * opts: {size, role, weight, pad, fill, stroke, color, selected, alpha, align:'center'|'left', underline}
    */
   D.token = (g, str, x, y, o = {}) => {
-    const size = o.size || 15;
+    const size = floorSize(o.size || 15, o.minSize);
     const role = o.role || 'body';
     const weight = o.weight || 600;
     const padX = o.padX ?? Math.round(size * 0.65), padY = o.padY ?? Math.round(size * 0.42);

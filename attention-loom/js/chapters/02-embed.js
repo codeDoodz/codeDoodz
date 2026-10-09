@@ -620,10 +620,6 @@
   #ch-embed .em-note { font-size: var(--fs-small); line-height: 1.5; color: var(--mist); }
   #ch-embed .em-note strong { color: var(--linen-dim); font-weight: 600; }
 
-  #ch-embed .em-dims-fig .stage-canvas canvas { cursor: crosshair; }
-  #ch-embed .em-readout { font-family: var(--font-mono); font-size: 11px; line-height: 1.7; color: var(--linen-dim); font-variant-numeric: tabular-nums; }
-  #ch-embed .em-readout b { color: var(--weld); font-weight: 500; }
-  #ch-embed .em-dims-prose { align-self: center; }
   `;
 
   // ======================================================================
@@ -1347,131 +1343,7 @@
   }
 
   // ======================================================================
-  // 6. Figure C: two views of the same vectors (model axes vs our recipe)
-  // ======================================================================
-
-  function mountDims(ctx, kit) {
-    const { el } = ctx;
-    const { S } = kit;
-    const WORDS = ['king', 'queen', 'prince', 'princess', 'man', 'woman', 'boy', 'girl'].map((w) => S.index.get(w));
-    const ROYAL = FEATS.indexOf('royal'), FEMALE = FEATS.indexOf('female');
-    const st = { view: 0, mix: 0, hoverCol: -1 };
-    const vmax = 0.25; // shared bar scale for both views; taller values saturate (stated in the caption)
-
-    const seg = AM.ui.segmented({
-      id: 'em-dims-view', label: 'Coordinates', value: 0,
-      options: [{ value: 0, label: 'Model’s 64 axes' }, { value: 1, label: 'Our recipe' }],
-      onChange: (v) => { st.view = v; },
-    });
-    const fig = AM.ui.figure({ title: 'Two coordinate systems', badge: 'toy', cls: 'em-dims-fig' });
-    const cv = ctx.canvas(null, {
-      height: (w) => (w < 480 ? 336 : 356),
-      label: 'Bar codes of the 64 coordinates of eight word vectors, plus the royal direction itself. In the model’s axes the royal direction is spread thinly over every column; in the recipe axes it is a single column, and a royal column and a female column light up for the words.',
-    });
-    // The royal direction as a unit vector: row ROYAL of the rotation in the model's axes, a single 1 in the recipe's.
-    const royalModel = Float64Array.from(S.Q[ROYAL]);
-    const royalRecipe = Float64Array.from({ length: D }, (_, j) => (j === ROYAL ? 1 : 0));
-    const readout = el('div', { class: 'em-readout' });
-    fig.append(seg.el, cv.wrap, readout, el('figcaption', { html: 'The same eight vectors in two bases. Blue bars are positive, red negative; word bars saturate at ±0.25. The bottom row is the royal direction itself, a vector of length 1 drawn at its own scale. Hover or tap a column to name it (or focus the chart and use the arrow keys). A rotation changes the coordinates and keeps every dot product, so the cosine scores agree to the last digit.' }));
-
-    // cosine computed separately in both bases, to show they agree
-    const cosIn = (key, i, j) => { const a = key === 'e' ? S.E[i] : S.words[i].rc, b = key === 'e' ? S.E[j] : S.words[j].rc; return dot(a, b) / (norm(a) * norm(b)); };
-    const k = S.index.get('king'), q = S.index.get('queen');
-    readout.innerHTML = `cos(king, queen) = <b>${cosIn('e', k, q).toFixed(6)}</b> · model’s axes<br>cos(king, queen) = <b>${cosIn('rc', k, q).toFixed(6)}</b> · recipe axes`;
-
-    const colName = (j) => {
-      if (st.view === 0) return `axis ${j}: no name, a blend of every feature`;
-      if (j < FEATS.length) return `axis ${j}: “${FEATS[j]}”`;
-      if (j < K) return `axis ${j}: identity code ${j - FEATS.length + 1} of ${N_ID}`;
-      return `axis ${j}: unused by the recipe, noise only`;
-    };
-
-    function draw() {
-      if (!cv.w) return;
-      const g = cv.g, { w, h } = cv;
-      cv.clear();
-      const small = w < 480;
-      const lx = small ? 62 : 74, x0 = lx + 6, x1 = w - 4;
-      const top = 30, gapR = 12, rowH = (h - top - 34 - gapR) / (WORDS.length + 1);
-      const yR = top + WORDS.length * rowH + gapR, bottom = yR + rowH; // the royal-direction row sits under the words
-      const cw = (x1 - x0) / D;
-      const m = st.mix;
-      // highlight columns in recipe view
-      if (m > 0.01) {
-        [[ROYAL, 'royal', 'right'], [FEMALE, 'female', 'left']].forEach(([j, name, side]) => {
-          g.save(); g.globalAlpha = m * 0.16; g.fillStyle = AM.dye.weld; g.fillRect(x0 + j * cw - 1, top - 4, cw + 2, (j === ROYAL ? bottom : top + rowH * WORDS.length) - top + 8); g.restore();
-          const tx = side === 'right' ? x0 + j * cw - 3 : x0 + (j + 1) * cw + 3; // the two columns are neighbours: label outward
-          DR.text(g, name, tx, top - 10, { size: 9, role: 'mono', color: AM.dye.weld, align: side, alpha: m });
-        });
-        const brackets = [[0, FEATS.length, 'named features'], [FEATS.length, K, 'ids'], [K, D, 'noise']];
-        brackets.forEach(([a, b, name]) => {
-          const xa = x0 + a * cw + 1, xb = x0 + b * cw - 1, y = h - 22;
-          g.save(); g.globalAlpha = m * 0.7; g.strokeStyle = AM.col.mist; g.lineWidth = 1;
-          g.beginPath(); g.moveTo(xa, y - 4); g.lineTo(xa, y); g.lineTo(xb, y); g.lineTo(xb, y - 4); g.stroke(); g.restore();
-          DR.text(g, name, (xa + xb) / 2, y + 13, { size: small ? 8.5 : 9.5, role: 'mono', color: AM.col.mist, align: 'center', alpha: m });
-        });
-      }
-      if (m < 0.99) DR.text(g, small ? '64 raw coordinates, none of them named' : '64 raw coordinates: none of them has a name', (x0 + x1) / 2, h - 10, { size: small ? 8.5 : 9.5, role: 'mono', color: AM.col.mist, align: 'center', alpha: 1 - m });
-      if (m < 0.99) DR.text(g, 'axis 0', x0, top - 10, { size: 9, role: 'mono', color: AM.col.mist, alpha: (1 - m) * 0.8 });
-      if (m < 0.99) DR.text(g, '63', x1, top - 10, { size: 9, role: 'mono', color: AM.col.mist, align: 'right', alpha: (1 - m) * 0.8 });
-
-      WORDS.forEach((i, r) => {
-        const y = top + r * rowH;
-        if (r === 4) { g.save(); g.fillStyle = AM.col.rule; g.fillRect(0, y - 1, w, 1); g.restore(); }
-        DR.text(g, S.words[i].w, lx, y + rowH / 2 + 4, { size: small ? 11.5 : 13, weight: 600, color: r < 4 ? AM.col.linen : AM.col.linenDim, align: 'right' });
-        // crossfade between the two coordinate systems (same vector, different basis)
-        if (m < 0.99) DR.vectorBars(g, x0, y + 2, x1 - x0, rowH - 4, S.E[i], { max: vmax, alpha: 1 - m });
-        if (m > 0.01) DR.vectorBars(g, x0, y + 2, x1 - x0, rowH - 4, S.words[i].rc, { max: vmax, alpha: m });
-      });
-      // the royal direction itself (unit length, own scale): smeared over 64 model axes, one recipe axis
-      g.save(); g.fillStyle = AM.col.rule; g.fillRect(0, yR - gapR / 2 - 0.5, w, 1); g.restore();
-      g.save(); g.fillStyle = AM.rgba(AM.dye.weld, 0.05); g.fillRect(x0 - 2, yR, x1 - x0 + 4, rowH); g.restore();
-      DR.text(g, 'royal', lx, yR + rowH / 2 - 1, { size: small ? 11 : 12, weight: 600, color: AM.dye.weld, align: 'right' });
-      DR.text(g, 'direction', lx, yR + rowH / 2 + 10, { size: 8, role: 'mono', color: AM.col.mist, align: 'right' });
-      if (m < 0.99) DR.vectorBars(g, x0, yR + 2, x1 - x0, rowH - 4, royalModel, { max: 1, alpha: 1 - m });
-      if (m > 0.01) DR.vectorBars(g, x0, yR + 2, x1 - x0, rowH - 4, royalRecipe, { max: 1, alpha: m });
-      if (st.hoverCol >= 0) {
-        const j = st.hoverCol;
-        g.save(); g.strokeStyle = AM.rgba(AM.col.linen, 0.5); g.lineWidth = 1; g.strokeRect(x0 + j * cw - 0.5, top - 3, cw + 1, bottom - top + 6); g.restore();
-        const label = colName(j);
-        const tw = DR.measure(g, label, 10, 'mono');
-        const tx = clamp(x0 + j * cw + cw / 2, x0 + tw / 2, x1 - tw / 2);
-        g.save(); g.fillStyle = AM.rgba(AM.col.ink, 0.9); g.fillRect(tx - tw / 2 - 6, 2, tw + 12, 18); g.restore();
-        DR.text(g, label, tx, 15, { size: 10, role: 'mono', color: AM.col.linen, align: 'center' });
-      }
-      st.geom = { x0, cw, top, bottom };
-    }
-
-    const onPoint = (e) => {
-      if (!st.geom) return;
-      const p = cv.pointer(e), { x0, cw, top, bottom } = st.geom;
-      const j = p.y > top - 6 && p.y < bottom + 6 ? Math.floor((p.x - x0) / cw) : -1;
-      const nj = j >= 0 && j < D ? j : -1;
-      if (nj !== st.hoverCol) { st.hoverCol = nj; draw(); }
-    };
-    cv.canvas.addEventListener('pointermove', onPoint);
-    cv.canvas.addEventListener('pointerdown', onPoint); // a tap names a column on touch screens
-    cv.canvas.addEventListener('pointerleave', () => { st.hoverCol = -1; draw(); });
-    cv.canvas.tabIndex = 0;
-    cv.canvas.addEventListener('keydown', (e) => {
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') st.hoverCol = clamp((st.hoverCol < 0 ? (e.key === 'ArrowLeft' ? D : -1) : st.hoverCol) + (e.key === 'ArrowLeft' ? -1 : 1), 0, D - 1);
-      else if (e.key === 'Escape') st.hoverCol = -1;
-      else return;
-      e.preventDefault(); draw();
-    });
-    cv.canvas.addEventListener('blur', () => { if (st.hoverCol >= 0) { st.hoverCol = -1; draw(); } });
-    cv.onResize(draw);
-    ctx.loop((t, dt) => {
-      const target = st.view;
-      if (Math.abs(st.mix - target) < 0.001) return;
-      st.mix = approach(st.mix, target, dt * 2.5);
-      draw();
-    });
-    return fig;
-  }
-
-  // ======================================================================
-  // 7. The chapter
+  // 6. The chapter
   // ======================================================================
 
   AM.chapter({
@@ -1533,7 +1405,7 @@
           el('p', {}, 'The threads join ', span('word', 'em-step-tag', ''), ' to its five nearest neighbours, scored in all 64 dimensions; the closest is ', span('nb', 'em-step-tag', ''), ' at ', span('nbcos', 'em-step-tag', ''), '. Pick another token under the picture.')),
         step('05 · Shadows', 'We only ever see shadows',
           P(`Nobody can picture 64 dimensions, so this view is a shadow. <span class="term">PCA</span> (principal component analysis) finds the directions along which the points spread most. We project onto the top three, which keep ${pcaPct}% of the spread; the strip shows all 64.`),
-          P(`We gave each toy word a rough “how common” score, and PCA found it: the vertical axis tracks it with correlation ${pc.corrY.toFixed(2)}. Real embeddings often have a direction like this too. Points that look close in a shadow can be far apart in full, so every score on this page is computed in ${D} dimensions.`)),
+          P(`Points that look close in a shadow can be far apart in full, so every score on this page is computed in ${D} dimensions.`)),
       ];
 
       const prose = el('div', { class: 'ch-prose' }, steps);
@@ -1549,29 +1421,16 @@
         mountExplorer(ctx, kit, `Toy embeddings: ${S.N} words built from hand-designed features plus noise, then spun into ${D} dimensions by a random rotation. Two shadows of the same points: <strong>PCA</strong> keeps the most spread overall; the <strong>analogy plane</strong> is aimed along A − B and C − B, so the parallelogram keeps its true shape while every other star is flattened onto it. Every score is cosine similarity in ${D}-d. Drag to turn the sky, hover or tap a star for its nearest neighbours, tap a group to spotlight it. With the keyboard, arrow keys turn the sky and Enter steps through A, B, C and the answer.`));
       const wide = el('div', { class: 'ch-wide', style: { display: 'grid', gap: 'var(--space-6)' } }, explorerIntro, explorer);
 
-      // Facts for the "where is royal stored?" copy, computed from the toy space.
-      const ROY = FEATS.indexOf('royal');
-      const royalTop = Math.max(...Array.from(S.Q[ROY], (x) => x * x)); // biggest share of the unit royal direction on one model axis
-      const royals = ['king', 'queen', 'prince', 'princess'].map((w) => S.index.get(w));
-      const splits = (j) => {
-        const r = royals.map((i) => S.E[i][j]), o = S.E.filter((_, i) => !royals.includes(i)).map((e) => e[j]);
-        return Math.min(...r) > Math.max(...o) || Math.max(...r) < Math.min(...o);
-      };
-      const noSplit = !Array.from({ length: D }, (_, j) => j).some(splits);
-      const dimsProse = el('div', { class: 'prose em-dims-prose' },
-        el('h3', {}, 'Where is “royal” stored?'),
-        P(`Nowhere in particular. The figure shows all ${D} coordinates of four royal words and four ordinary ones. No column is set aside for royalty: each one mixes many features${noSplit ? `, and none of them separates the four royal words from the other ${S.N - 4}` : ''}.`),
-        P(`The bottom row is the royal direction itself. In the model’s axes it is spread thinly over all ${D} coordinates; the biggest one carries only ${Math.round(100 * royalTop)}% of it (measured as squared length).`),
-        P('We built this toy space from named features such as <em>royal</em>, <em>female</em>, <em>young</em> and <em>past tense</em>, then spun it with a random rotation. A rotation changes every coordinate and keeps every angle, so each cosine score is unchanged. Flip the view to see our recipe, where the royal direction is a single axis.'),
-        P('A real model has no recipe to un-spin. Training has little reason to line meaning up with the axes, so meaning ends up spread across many dimensions at once. Researchers hunt for meaningful directions with tools such as linear probes and sparse autoencoders.'));
-      const dims = el('div', { class: 'grid-2' }, dimsProse, mountDims(ctx, kit));
+      // Single coordinates are not labels: said in two sentences instead of a second figure.
+      const dirs = el('div', { class: 'prose' },
+        P(`No single coordinate means <em>royal</em>. The royal direction is spread thinly across all ${D}, and researchers hunt for directions like it in real models with tools such as linear probes and sparse autoencoders.`));
 
       const callout = el('div', { class: 'callout' },
         el('span', { class: 'callout-label' }, 'Key idea'),
         P('An embedding is one row of a learned table, and training shapes the whole table so that geometry mirrors usage. Words used alike point alike, and some directions line up with ideas such as gender or tense.'),
         P('The lookup ignores context: <em>bank</em> gets the same row in “river bank” and “bank account”. Mixing in context is the job of the layers that follow.'));
 
-      root.appendChild(el('div', { class: 'ch-body' }, split, wide, dims, callout));
+      root.appendChild(el('div', { class: 'ch-body' }, split, wide, dirs, callout));
     },
   });
 })();

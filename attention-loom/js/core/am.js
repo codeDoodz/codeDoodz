@@ -180,7 +180,36 @@
         : "'Figtree', system-ui, -apple-system, 'Segoe UI', sans-serif";
     return `${italic ? 'italic ' : ''}${weight} ${size}px ${fam}`;
   };
-  AM.fontsReady = (document.fonts && document.fonts.ready) ? document.fonts.ready.catch(() => {}) : Promise.resolve();
+
+  /** Smallest canvas text size D.text / D.measure / D.token will draw (px). Pass
+      {minSize: 0} to opt out for one label. Touch screens get a slightly higher floor. */
+  AM.minText = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ? 8.5 : 8;
+
+  // Web fonts load without blocking first paint: index.html links the Google Fonts
+  // stylesheet with media="print" and flips it to "all" once it arrives. The inline
+  // onload does that; this is the fallback for hosts whose CSP drops inline handlers.
+  const fontLink = document.querySelector('link[data-am-fonts]');
+  if (fontLink && fontLink.media !== 'all') {
+    const apply = () => { fontLink.media = 'all'; };
+    if (fontLink.sheet) apply(); else fontLink.addEventListener('load', apply, { once: true });
+  }
+  /** Resolves once the three web font families are usable (or failed, or after 10 s).
+      Canvas code that caches text measurements can re-measure when it settles. */
+  AM.fontsReady = new Promise((resolve) => {
+    const fs = document.fonts;
+    if (!fs || !fs.load) { resolve(); return; }
+    const faces = ["500 16px 'Figtree'", "400 16px 'Martian Mono'", "500 16px 'Bodoni Moda'"];
+    const loadFaces = () => Promise.all(faces.map((f) => fs.load(f).catch(() => null)))
+      .then(() => fs.ready).then(() => resolve(), () => resolve());
+    // After the stylesheet applies, wait one frame so its @font-face rules are registered.
+    const afterSheet = () => requestAnimationFrame(() => setTimeout(loadFaces, 0));
+    if (!fontLink || (fontLink.sheet && fontLink.media === 'all')) afterSheet();
+    else {
+      fontLink.addEventListener('load', afterSheet, { once: true });
+      fontLink.addEventListener('error', () => resolve(), { once: true });
+    }
+    setTimeout(resolve, 10000);
+  });
 
   // ------------------------------------------------------------------ registry & lifecycle
   const defs = [];
@@ -227,7 +256,10 @@
     ctx.onVisible = (fn) => { ctx._onVisible.push(fn); if (ctx.visible) fn(); };
     ctx.onHidden = (fn) => { ctx._onHidden.push(fn); };
 
-    /** DPR-aware canvas that tracks its container width. */
+    /** DPR-aware canvas that tracks its container width.
+        opts.maxHeight may be a number, a function of width, or 'stage': when the
+        chapter's split is stacked (phones and tablets), the whole sticky stage is
+        then kept within --stage-max (half the screen, at most 560px). */
     ctx.canvas = (parent, opts = {}) => {
       const wrap = AM.el('div', { class: 'stage-canvas' });
       const canvas = AM.el('canvas');
@@ -237,14 +269,16 @@
       const g = canvas.getContext('2d');
       const api = { canvas, wrap, g, w: 0, h: 0, dpr: 1, _cbs: [] };
       api.onResize = (fn) => { api._cbs.push(fn); if (api.w) fn(api.w, api.h); return api; };
-      api.resize = () => {
-        const w = Math.max(1, Math.round(wrap.clientWidth || parent?.clientWidth || 600));
+      /** Re-measure (cw: a known content width, which skips the layout read). */
+      api.resize = (cw) => {
+        const w = Math.max(1, Math.round((typeof cw === 'number' && cw > 0 ? cw : 0) || wrap.clientWidth || parent?.clientWidth || 600));
         let h;
         if (typeof opts.height === 'function') h = opts.height(w);
         else if (typeof opts.height === 'number') h = opts.height;
         else h = w / (opts.aspect || 16 / 9);
         if (opts.minHeight) h = Math.max(opts.minHeight, h);
-        if (opts.maxHeight) h = Math.min(typeof opts.maxHeight === 'function' ? opts.maxHeight(w) : opts.maxHeight, h);
+        if (opts.maxHeight === 'stage') h = Math.min(stageCap(wrap, api.h), h);
+        else if (opts.maxHeight) h = Math.min(typeof opts.maxHeight === 'function' ? opts.maxHeight(w) : opts.maxHeight, h);
         h = Math.round(h);
         const dpr = Math.min(window.devicePixelRatio || 1, opts.maxDpr || 2);
         if (w === api.w && h === api.h && dpr === api.dpr) return;
@@ -263,13 +297,41 @@
       };
       /** Pointer position in CSS px relative to the canvas. */
       api.pointer = (ev) => { const r = canvas.getBoundingClientRect(); return { x: ev.clientX - r.left, y: ev.clientY - r.top }; };
-      if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => api.resize()).observe(wrap);
-      else window.addEventListener('resize', api.resize);
+      // The observer reports the wrap's width itself (no forced layout), including its
+      // first size once attached and laid out, so no extra per-canvas rAF pass is needed.
+      if (typeof ResizeObserver !== 'undefined') {
+        new ResizeObserver((entries) => {
+          const e = entries[entries.length - 1];
+          if (e && e.contentRect.width > 0) api.resize(e.contentRect.width);
+        }).observe(wrap);
+      } else {
+        window.addEventListener('resize', () => api.resize());
+        requestAnimationFrame(() => api.resize());
+      }
       ctx._resizers.push(api);
-      requestAnimationFrame(() => api.resize());
-      api.resize();
+      api.resize(); // synchronous first size: chapters may draw straight after creating it
       return api;
     };
+
+    /** A scrollytelling step card: "n · label", a title and body HTML (or nodes).
+        n counts up per chapter unless given. */
+    ctx._stepN = 0;
+    ctx.step = ({ n, label = '', title, html, body, cls } = {}) => {
+      const num = n != null ? n : ++ctx._stepN;
+      if (n != null) ctx._stepN = n;
+      const card = AM.el('div', { class: 'step' + (cls ? ' ' + cls : '') },
+        AM.el('div', { class: 'step-label' }, label ? `${num} · ${label}` : String(num)),
+        title ? AM.el('h3', { html: title }) : null);
+      if (html) { const t = document.createElement('template'); t.innerHTML = html; card.appendChild(t.content); }
+      if (body) card.append(...[body].flat(Infinity).filter(Boolean));
+      return card;
+    };
+
+    /** Opening of a section after the scrollytelling: gold eyebrow + h3 (+ optional lead). */
+    ctx.subhead = (eyebrow, title, lead) => AM.el('header', { class: 'subhead' },
+      eyebrow ? AM.el('p', { class: 'subhead-eyebrow' }, eyebrow) : null,
+      AM.el('h3', { html: title || '' }),
+      lead ? AM.el('p', { class: 'subhead-lead', html: lead }) : null);
 
     /** Scrollytelling: onStep(i, el) when the i-th element crosses the middle of the viewport. */
     ctx.steps = (els, onStep) => {
@@ -284,8 +346,20 @@
       // The active step is the last one whose top edge has crossed a line a little
       // below mid-screen. Computed from layout on scroll (not from intersection
       // events) so it stays right after instant jumps, rail clicks and resizes.
+      // When the split is stacked (stage sticky on top, about as wide as the split),
+      // the line moves down to just below the stage, so a step only activates once
+      // its label and first lines have cleared the picture.
+      const split = els[0] ? els[0].closest('.ch-split') : null;
+      const stage = split ? Array.from(split.children).find((c) => c.classList.contains('ch-stage')) : null;
       const pick = () => {
-        const line = window.innerHeight * 0.58;
+        const vh = window.innerHeight;
+        let line = vh * 0.58;
+        if (stage) {
+          const sr = stage.getBoundingClientRect();
+          if (sr.width > split.getBoundingClientRect().width * 0.8 && sr.height > 0) {
+            line = Math.min(vh * 0.9, Math.max(line, sr.bottom + 32));
+          }
+        }
         let idx = 0;
         for (let j = 0; j < els.length; j++) if (els[j].getBoundingClientRect().top < line) idx = j;
         set(idx);
@@ -297,6 +371,27 @@
     };
 
     return ctx;
+  }
+
+  // Sticky stage height per split (--stage-h), so focused links in the prose can keep
+  // clear of a stacked stage (see scroll-margin-top in base.css).
+  const stageRO = typeof ResizeObserver !== 'undefined' ? new ResizeObserver((entries) => {
+    for (const e of entries) {
+      const split = e.target.parentElement;
+      if (split) split.style.setProperty('--stage-h', Math.round(e.target.getBoundingClientRect().height) + 'px');
+    }
+  }) : null;
+
+  /** Max canvas height for opts.maxHeight === 'stage' (see ctx.canvas). */
+  const stackedMQ = window.matchMedia ? window.matchMedia('(max-width: 900px)') : null;
+  function stageCap(wrap, curH) {
+    if (!stackedMQ || !stackedMQ.matches) return Infinity;
+    const stage = wrap.closest('.ch-stage');
+    if (!stage) return Infinity;
+    const budget = Math.min(window.innerHeight * 0.5, 560);
+    // Everything in the stage that is not this canvas: titles, controls, legends, padding.
+    const other = Math.max(0, stage.offsetHeight - (wrap.offsetHeight || curH || 0));
+    return Math.max(200, budget - other);
   }
 
   function mountOne(def) {
@@ -313,8 +408,48 @@
       root.appendChild(AM.el('div', { class: 'ch-error' }, `Chapter "${def.id}" failed to load: ${e && e.message}`));
     }
     live.push(ctx);
+    if (stageRO) root.querySelectorAll('.ch-split > .ch-stage').forEach((s) => stageRO.observe(s));
     if (io) io.observe(root);
   }
+
+  // Boot mounts the hero at once, then one chapter per task in page order, so the
+  // page paints and scrolls while the rest is still being built. Deep links, in-page
+  // link clicks and scroll restoration build what they need synchronously.
+  let pending = [];
+  let pumpTimer = 0;
+  let resolveMounted;
+  /** Resolves when every registered chapter has mounted. */
+  AM.whenMounted = new Promise((r) => { resolveMounted = r; });
+  AM.mountedAll = false;
+  function allMounted() {
+    if (AM.mountedAll) return;
+    AM.mountedAll = true;
+    AM.mountedAt = performance.now();
+    resolveMounted();
+    try { document.dispatchEvent(new CustomEvent('am:mounted')); } catch (e) { /* old browsers */ }
+  }
+  function pump() {
+    pumpTimer = 0;
+    const def = pending.shift();
+    if (def) mountOne(def);
+    if (pending.length) pumpTimer = setTimeout(pump, 0);
+    else allMounted();
+  }
+  /** Mount, right now and in order, every pending chapter up to and including `id`. */
+  function mountThrough(id) {
+    const i = pending.findIndex((d) => d.id === id);
+    if (i < 0) return false;
+    pending.splice(0, i + 1).forEach(mountOne);
+    if (!pending.length) { clearTimeout(pumpTimer); pumpTimer = 0; allMounted(); }
+    return true;
+  }
+  function mountAll() {
+    const all = pending; pending = [];
+    clearTimeout(pumpTimer); pumpTimer = 0;
+    all.forEach(mountOne);
+    allMounted();
+  }
+  AM.mountAll = mountAll;
 
   // Scroll-driven step pickers (see ctx.steps), throttled to one pass per frame.
   const stepPickers = [];
@@ -335,7 +470,12 @@
         if (!ctx) continue;
         const was = ctx.visible;
         ctx.visible = en.isIntersecting;
-        if (ctx.visible && !was) { ctx._onVisible.forEach((f) => { try { f(); } catch (e) { console.error(e); } }); ensureTicking(); }
+        ctx.root.classList.toggle('is-onscreen', ctx.visible);
+        if (ctx.visible && !was) {
+          if (ctx._fontsDirty) refireResizers(ctx);
+          ctx._onVisible.forEach((f) => { try { f(); } catch (e) { console.error(e); } });
+          ensureTicking();
+        }
         if (!ctx.visible && was) ctx._onHidden.forEach((f) => { try { f(); } catch (e) { console.error(e); } });
       }
     }, { rootMargin: '15% 0px 15% 0px', threshold: 0 });
@@ -420,14 +560,93 @@
           AM.el('span', { class: 'toc-title', html: d.title || d.id })))))));
   }
 
+  // When web fonts arrive, canvases redraw so their text uses the right face. Chapters
+  // on screen redraw at once; the rest are marked and redraw when they next appear.
+  function refireResizers(c) {
+    c._fontsDirty = false;
+    c._resizers.forEach((r) => { const w = r.w; r.w = 0; r.resize(); if (!r.w) r.w = w; });
+  }
+  let fontTimer = 0;
+  function fontsChanged() {
+    clearTimeout(fontTimer);
+    fontTimer = setTimeout(() => {
+      for (const c of live) { if (c.visible) refireResizers(c); else c._fontsDirty = true; }
+    }, 80);
+  }
+
   AM.boot = () => {
     if (booted) return;
     booted = true;
-    defs.slice().sort((a, b) => (a.num ?? -1) - (b.num ?? -1)).forEach(mountOne);
+    // The single-file fragment build loses <html lang>; screen readers need it.
+    if (!document.documentElement.lang) document.documentElement.lang = 'en';
+    const order = defs.slice().sort((a, b) => (a.num ?? -1) - (b.num ?? -1));
     buildRail();
     buildToc();
-    // When web fonts arrive, re-fire canvas resize callbacks so text redraws in the right face.
-    AM.fontsReady.then(() => live.forEach((c) => c._resizers.forEach((r) => { const w = r.w; r.w = 0; r.resize(); if (!r.w) r.w = w; })));
+
+    pending = order.filter((d) => document.querySelector(`[data-chapter="${d.id}"]`));
+    // Before jumping to a fragment, build every chapter above (and holding) its target.
+    const buildFor = (frag) => {
+      if (!pending.length || !frag) return;
+      let id = frag; try { id = decodeURIComponent(frag); } catch (e) { /* keep raw */ }
+      const target = document.getElementById(id);
+      if (!target) { mountAll(); return; } // probably inside a chapter not built yet
+      const sec = target.closest('[data-chapter]');
+      if (sec) { mountThrough(sec.getAttribute('data-chapter')); return; }
+      const above = pending.filter((d) => {
+        const s = document.querySelector(`[data-chapter="${d.id}"]`);
+        return s && (s.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING);
+      });
+      if (above.length) mountThrough(above[above.length - 1].id);
+    };
+    const nav = performance.getEntriesByType ? performance.getEntriesByType('navigation')[0] : null;
+    if (nav && (nav.type === 'reload' || nav.type === 'back_forward')) {
+      mountAll(); // the browser is about to restore an old scroll position
+    } else {
+      pending.splice(0, 1).forEach(mountOne); // the hero; chapter 1 follows in the next task
+      // Deep link: build what lies above the target, then land on it at once (the
+      // browser's own fragment scroll would glide there from the top).
+      const frag = location.hash.slice(1);
+      if (frag) {
+        buildFor(frag);
+        let target = null; try { target = document.getElementById(decodeURIComponent(frag)); } catch (e) { /* bad escape */ }
+        if (target && target.id !== 'top') target.scrollIntoView({ behavior: 'instant', block: 'start' });
+      }
+      if (pending.length) pumpTimer = setTimeout(pump, 0);
+      else allMounted();
+    }
+    // Clicks on in-page links (contents, rail, cross-references) build up to the target
+    // first, so the jump lands on the finished layout.
+    document.addEventListener('click', (ev) => {
+      if (!pending.length) return;
+      const a = ev.target && ev.target.closest ? ev.target.closest('a[href^="#"]') : null;
+      if (a) buildFor(a.getAttribute('href').slice(1));
+    }, true);
+    window.addEventListener('hashchange', () => buildFor(location.hash.slice(1)));
+
+    // Keyboard focus must not land under a stacked sticky stage (WCAG 2.4.11). The
+    // browser does not scroll an element that is inside the viewport, even when the
+    // stage covers it, so nudge the page until the element sits below the stage.
+    document.addEventListener('focusin', (ev) => {
+      const t = ev.target;
+      if (!t || !t.closest || !t.closest('.ch-prose')) return;
+      try { if (!t.matches(':focus-visible')) return; } catch (e) { /* old browsers: carry on */ }
+      const split = t.closest('.ch-split');
+      const stage = split && Array.from(split.children).find((c) => c.classList.contains('ch-stage'));
+      if (!stage) return;
+      const clear = () => {
+        const sr = stage.getBoundingClientRect();
+        if (sr.width < split.getBoundingClientRect().width * 0.8) return false; // side by side
+        const tr = t.getBoundingClientRect();
+        if (!(tr.top < sr.bottom + 8 && tr.bottom > sr.top)) return false;
+        window.scrollBy({ top: tr.top - sr.bottom - 16, behavior: 'instant' });
+        return true;
+      };
+      // Check again after the step change the scroll may trigger (stages change height).
+      if (clear()) requestAnimationFrame(() => requestAnimationFrame(() => { if (document.activeElement === t) clear(); }));
+    });
+
+    AM.fontsReady.then(fontsChanged);
+    if (document.fonts && document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', fontsChanged);
   };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => AM.boot());

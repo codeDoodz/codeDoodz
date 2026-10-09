@@ -105,14 +105,22 @@
       position: relative; z-index: 2; width: 100%; max-width: var(--content); margin: var(--space-3) auto 0;
       display: grid; grid-template-rows: minmax(0, 1fr) auto; pointer-events: none;
     }
-    #ch-${ID} .pl-space { position: relative; min-height: clamp(260px, 36vh, 560px); }
+    #ch-${ID} .pl-space { position: relative; min-height: clamp(250px, 32vh, 560px); }
     #ch-${ID} .pl-ring { position: absolute; left: 0; top: 0; width: 0; height: 0; border-radius: 16px; pointer-events: none; }
     #ch-${ID} .pl-ring:focus-visible { outline: 1px solid color-mix(in srgb, var(--weld) 75%, transparent); outline-offset: 4px; }
     #ch-${ID} .pl-dock {
       pointer-events: auto; display: grid; align-items: center;
-      grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: 'badge read ctrl';
-      gap: 8px 22px; padding: 12px 0 64px;
+      grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: 'badge read ctrl' 'legend legend legend';
+      gap: 8px 22px; padding: 12px 0 72px;
     }
+    #ch-${ID} .pl-legend {
+      grid-area: legend; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin: 0;
+      padding-top: 8px; border-top: 1px solid var(--rule); font-size: 0.75rem; line-height: 1.4; color: var(--mist);
+    }
+    #ch-${ID} .pl-legend-lead { color: var(--linen-dim); }
+    #ch-${ID} .pl-key { display: inline-flex; align-items: center; gap: 8px; }
+    #ch-${ID} .pl-key .badge { font-size: 9px; padding: 2px 8px 2px 7px; gap: 6px; }
+    #ch-${ID} .pl-key .badge::before { width: 6px; height: 6px; animation: none; }
     #ch-${ID} .pl-dock > .badge { grid-area: badge; justify-self: start; }
     #ch-${ID} .pl-read {
       grid-area: read; max-width: 92ch; min-height: 4.5em; font-size: var(--fs-small); line-height: 1.5; color: var(--linen-dim);
@@ -156,7 +164,7 @@
     @keyframes pl-drop { 0% { transform: translateY(0); opacity: 0; } 15% { opacity: 1; } 70% { opacity: 1; } 100% { transform: translateY(34px); opacity: 0; } }
     @media (prefers-reduced-motion: reduce) { #ch-${ID} .pl-cue i::after { animation: none; top: 8px; } }
     @media (max-width: 900px) {
-      #ch-${ID} .pl-dock { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: 'badge ctrl' 'read read'; gap: 6px 12px; padding-bottom: 54px; }
+      #ch-${ID} .pl-dock { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: 'badge ctrl' 'read read' 'legend legend'; gap: 6px 12px; padding-bottom: 62px; }
       #ch-${ID} .pl-read { min-height: 4.5em; align-items: flex-start; }
     }
     @media (max-width: 640px) {
@@ -224,10 +232,18 @@
       const ICON_PAUSE = '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="1.5" width="2.6" height="9" rx="1" fill="currentColor"/><rect x="7.4" y="1.5" width="2.6" height="9" rx="1" fill="currentColor"/></svg>';
       const ICON_PLAY = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 1.6 L10.2 6 L3 10.4 Z" fill="currentColor"/></svg>';
       const playBtn = el('button', { type: 'button', class: 'pl-play', id: 'pl-play', onclick: () => setAuto(!st.auto) });
+      // the honesty badges, explained once for readers who cannot hover for a tooltip
+      const key = (kind, text) => el('span', { class: 'pl-key' }, AM.ui.badge(kind), el('span', {}, text));
+      const legend = el('p', { class: 'pl-legend' },
+        el('span', { class: 'pl-legend-lead' }, 'Every figure carries a badge:'),
+        key('live', 'computed now by the tiny transformer'),
+        key('toy', 'small numbers built by hand'),
+        key('illustration', 'a picture, not literal numbers'));
       const dock = el('div', { class: 'pl-dock' },
         AM.ui.badge('live'),
         read,
-        el('div', { class: 'pl-ctrl' }, el('div', { class: 'pl-pips', role: 'group', 'aria-label': 'Choose a sentence' }, pipBtns), playBtn));
+        el('div', { class: 'pl-ctrl' }, el('div', { class: 'pl-pips', role: 'group', 'aria-label': 'Choose a sentence' }, pipBtns), playBtn),
+        legend);
       const floor = el('div', { class: 'pl-floor' }, space, dock);
       root.appendChild(floor);
       const next = root.nextElementSibling;
@@ -328,7 +344,11 @@
         const dx1 = Math.min(cv.w, Math.ceil((Mz.cR + 64) * dp) / dp);
         const span = Math.max(1, xs[T - 1] - xs[0]);
         const hoff = Array.from({ length: NH }, (_, h) => (h - (NH - 1) / 2) * (phone ? 2.2 : 3));
-        const geo = { phone, s, fs, labW, x0, x1, sp, xs, tw, stagger, tokH, rowGap, tokY, yb, bandH, maxLift, loomTop, predH, ry0, ry1, dx0, dx1, span, hoff, Mz, cL: Mz.cL, cR: Mz.cR };
+        // the shuttle turns just outside the edge warps (far enough to finish revealing a layer)
+        // and its glowing bead never leaves the canvas
+        const ov = Math.min(sp * 0.5, phone ? 16 : 24);
+        const shMin = phone ? 20 : 16, shMax = cv.w - shMin;
+        const geo = { phone, s, fs, labW, x0, x1, sp, xs, tw, stagger, tokH, rowGap, tokY, yb, bandH, maxLift, loomTop, predH, ry0, ry1, dx0, dx1, span, hoff, ov, shMin, shMax, Mz, cL: Mz.cL, cR: Mz.cR };
         // arc geometry for every thread (key → query, rising above the layer's baseline)
         for (const th of d.threads) {
           const xk = xs[th.k] + hoff[th.h], xq = xs[th.q] + hoff[th.h], y = yb[th.l];
@@ -414,11 +434,15 @@
       function warpGradient(g, Q) {
         const yEnd = Q.yb[0] + 10;
         const f = (y) => clamp(y / Math.max(1, yEnd));
+        // fully transparent behind the title and subtitle, then rising into the loom
+        const s0 = f(Q.Mz.textBottom + 8);
+        const s1 = Math.max(s0 + 0.02, f(Math.max(Q.ry0, Q.loomTop - Q.bandH * 0.3)));
+        const s2 = Math.max(s1 + 0.02, f(Q.loomTop + Q.bandH * 0.4));
         const grad = g.createLinearGradient(0, 0, 0, yEnd);
         grad.addColorStop(0, AM.rgba(AM.col.linen, 0));
-        grad.addColorStop(f(Q.Mz.textBottom * 0.55), AM.rgba(AM.col.linen, 0.03));
-        grad.addColorStop(f(Q.ry0), AM.rgba(AM.col.linen, 0.1));
-        grad.addColorStop(f(Q.loomTop + Q.bandH * 0.4), AM.rgba(AM.col.linen, 0.2));
+        grad.addColorStop(Math.min(s0, 0.9), AM.rgba(AM.col.linen, 0));
+        grad.addColorStop(Math.min(s1, 0.94), AM.rgba(AM.col.linen, 0.1));
+        grad.addColorStop(Math.min(s2, 0.97), AM.rgba(AM.col.linen, 0.2));
         grad.addColorStop(1, AM.rgba(AM.col.linen, 0.3));
         return grad;
       }
@@ -460,9 +484,10 @@
           g.fillText(lab, near ? edge : Q.cL, y - Q.bandH * 0.42);
           if ('letterSpacing' in g) g.letterSpacing = '0px';
         }
-        // warp threads hanging from the top of the hero, brightest in the loom, ending in a bead above each word
+        // warp threads rising out of the dark below the subtitle, brightest in the loom, ending in a bead above each word
         g.beginPath();
-        Q.xs.forEach((x, i) => { const xx = Math.round(x) + 0.5; g.moveTo(xx, 0); g.lineTo(xx, Q.tokY[i] - Q.fs * 0.95); });
+        const wTop = Math.max(0, Math.min(Q.Mz.textBottom, Q.loomTop - Q.bandH));
+        Q.xs.forEach((x, i) => { const xx = Math.round(x) + 0.5; g.moveTo(xx, wTop); g.lineTo(xx, Q.tokY[i] - Q.fs * 0.95); });
         g.strokeStyle = warpGradient(g, Q);
         g.lineWidth = 1; g.stroke();
         g.globalAlpha = 0.35; g.lineWidth = 4; g.stroke();
@@ -675,7 +700,7 @@
       function weaveBand(g, l, u) {
         const B = bands[l];
         const dir = l % 2 === 0 ? 1 : -1;
-        const xa = G.xs[0] - G.sp * 0.5, xb = G.xs[data.T - 1] + G.sp * 0.5;
+        const xa = G.xs[0] - G.ov, xb = G.xs[data.T - 1] + G.ov;
         const e = easeIO(clamp(u));
         const sx = dir > 0 ? M.lerp(xa, xb, e) : M.lerp(xb, xa, e);
         // behind the shuttle the layer is woven; ahead of it the pattern is still a ghost
@@ -701,7 +726,7 @@
         }
         g.globalAlpha = 1;
         g.globalCompositeOperation = 'source-over';
-        return { x: sx, y: G.yb[l] - G.bandH * 0.5, dir };
+        return { x: clamp(sx, G.shMin, G.shMax), y: G.yb[l] - G.bandH * 0.5, dir };
       }
       function drawShuttle(g, pos, l, reedA) {
         const { x, y } = pos;
@@ -717,6 +742,16 @@
           g.beginPath(); g.moveTo(x, yT); g.lineTo(x, yB); g.stroke();
           g.globalCompositeOperation = 'lighter';
           g.lineWidth = 12; g.globalAlpha = 0.16; g.stroke(); g.globalAlpha = 1;
+          g.globalCompositeOperation = 'source-over';
+        }
+        // between layers: a short weft from the edge warp to the bead, so the shuttle reads as attached
+        const te = pos.tether;
+        if (te && te.a > 0.01) {
+          g.globalCompositeOperation = 'lighter';
+          g.lineCap = 'round';
+          g.beginPath(); g.moveTo(te.x, te.y); g.quadraticCurveTo(x, te.y, x, y);
+          g.strokeStyle = AM.rgba(AM.dye.weld, 0.12 * te.a); g.lineWidth = 4; g.stroke();
+          g.strokeStyle = AM.rgba(AM.dye.weld, 0.55 * te.a); g.lineWidth = 1.1; g.stroke();
           g.globalCompositeOperation = 'source-over';
         }
         // comet trail
@@ -989,10 +1024,13 @@
             const s0 = l * (DUR.band + DUR.swoop) + DUR.band;
             if (p >= s0 && p < s0 + DUR.swoop) {
               const u = easeIO((p - s0) / DUR.swoop);
-              const xEnd = l % 2 === 0 ? G.xs[data.T - 1] + G.sp * 0.5 : G.xs[0] - G.sp * 0.5;
+              const right = l % 2 === 0;
+              const xEdge = right ? G.xs[data.T - 1] : G.xs[0];
+              const xEnd = xEdge + (right ? G.ov : -G.ov);
               const yA = G.yb[l] - G.bandH * 0.5, yB = G.yb[l + 1] - G.bandH * 0.5;
-              const bulge = (l % 2 === 0 ? 1 : -1) * Math.sin(Math.PI * u) * Math.min(26, G.sp * 0.4);
-              shuttle = { x: xEnd + bulge, y: M.lerp(yA, yB, u) };
+              const bulge = (right ? 1 : -1) * Math.sin(Math.PI * u) * Math.min(18, G.sp * 0.4);
+              // the weft yarn trails from the bead back to the edge warp it just left
+              shuttle = { x: clamp(xEnd + bulge, G.shMin, G.shMax), y: M.lerp(yA, yB, u), tether: { x: xEdge, y: yA, a: Math.min(1, 3 * Math.sin(Math.PI * u)) } };
               shuttleL = l + 1;
             }
           }

@@ -1,4 +1,4 @@
-/* Chapter 11 — The live training lab: "Watch a Mind Form".
+/* Chapter 11 — The live training lab: "Watch a Pattern Form".
 
    A real transformer trains from scratch in the visitor's browser.
 
@@ -114,11 +114,40 @@ AMTrainerMain(self);
   let BODY = null;
   const body = () => BODY || (BODY = [LIB.AMTensorLib, LIB.AMTransformerLib, LIB.AMTaskLib, LIB.AMTrainerMain].map(String).join('\n;\n') + '\n;\n' + HOOK);
 
-  /** Main-thread stand-in with the Worker interface (as in api.js). */
+  /** Main-thread stand-in with the Worker interface (as in api.js), built without eval so it
+      also runs under a Content-Security-Policy that blocks both blob workers and 'unsafe-eval'.
+      AMTrainerMain runs here directly. It looks AMTransformerLib up by name once, when it starts,
+      so for that one synchronous call the global is swapped for the same hook the worker gets
+      (remember the model and its step), then put back. If the libraries are not globals the swap
+      is skipped: training still works, and the bench keeps the weights it already has. */
   function inlineWorker() {
     const fake = { onmessage: null, terminated: false };
     const inner = { onmessage: null, postMessage(msg) { setTimeout(() => { if (!fake.terminated && fake.onmessage) fake.onmessage({ data: msg }); }, 0); } };
-    new Function('self', body())(inner); // eslint-disable-line no-new-func
+    const cap = { model: null, tl: null, step: 0 };
+    const hooked = (T) => {
+      const tl = LIB.AMTransformerLib(T), init = tl.init, mk = tl.createTrainer;
+      tl.init = (c, sd) => { cap.model = init(c, sd); cap.step = 0; return cap.model; };
+      tl.createTrainer = (mdl, o) => { const tr = mk(mdl, o), st = tr.step; tr.step = (b) => { const res = st(b); cap.step = res.step; return res; }; return tr; };
+      cap.tl = tl;
+      return tl;
+    };
+    const G = typeof globalThis !== 'undefined' ? globalThis : window;
+    let swapped = false;
+    try {
+      if (G.AMTransformerLib === LIB.AMTransformerLib) { G.AMTransformerLib = hooked; swapped = G.AMTransformerLib === hooked; }
+      LIB.AMTrainerMain(inner);
+    } finally {
+      if (swapped) G.AMTransformerLib = LIB.AMTransformerLib;
+    }
+    const handle = inner.onmessage;
+    inner.onmessage = (e) => {
+      const m = e.data || {};
+      if (m.type === 'weights') {
+        if (cap.model) inner.postMessage({ type: 'weights', step: cap.step, config: cap.model.config, tensors: cap.tl.exportWeights(cap.model, false) });
+        return;
+      }
+      handle.call(inner, e);
+    };
     fake.postMessage = (msg) => setTimeout(() => { if (!fake.terminated && inner.onmessage) inner.onmessage({ data: msg }); }, 0);
     fake.terminate = () => { fake.terminated = true; if (inner.onmessage) inner.onmessage({ data: { type: 'pause' } }); };
     return fake;
@@ -131,6 +160,15 @@ AMTrainerMain(self);
     const early = [];
     let w = null, ready = false, dead = false;
     const ctl = { inline: false };
+    /** Switch to the main-thread trainer; if even that cannot start, say so through onMsg. */
+    const fallBack = () => {
+      try { attach(inlineWorker(), true); return true; } catch (err) {
+        dead = true; w = null;
+        const message = (err && err.message) || String(err);
+        setTimeout(() => onMsg({ type: 'error', fatal: true, message }), 0);
+        return false;
+      }
+    };
     const attach = (worker, isInline) => {
       w = worker;
       ctl.inline = isInline;
@@ -141,8 +179,7 @@ AMTrainerMain(self);
           if (dead) return;
           if (!ready) {
             try { w.terminate(); } catch (_) { /* already gone */ }
-            attach(inlineWorker(), true);
-            early.forEach((m) => w.postMessage(m.type === 'init' ? Object.assign({}, m, { opts: inlineOpts(m.opts) }) : m));
+            if (fallBack()) early.forEach((m) => w.postMessage(m.type === 'init' ? Object.assign({}, m, { opts: inlineOpts(m.opts) }) : m));
           } else onMsg({ type: 'error', message: (e && e.message) || 'worker error' });
         };
       }
@@ -153,14 +190,14 @@ AMTrainerMain(self);
       attach(new Worker(url), false);
       setTimeout(() => URL.revokeObjectURL(url), 10000);
     } catch (_) { w = null; }
-    if (!w) attach(inlineWorker(), true);
-    const send = (m) => { if (dead) return; if (!ready) early.push(m); w.postMessage(m); };
+    if (!w) fallBack();
+    const send = (m) => { if (dead || !w) return; if (!ready) early.push(m); w.postMessage(m); };
     send({ type: 'init', task, opts: ctl.inline ? inlineOpts(opts) : opts });
     ctl.start = () => send({ type: 'start' });
     ctl.pause = () => send({ type: 'pause' });
     ctl.set = (o) => send(Object.assign({ type: 'set' }, o));
     ctl.weights = () => send({ type: 'weights' });
-    ctl.terminate = () => { dead = true; try { w.terminate(); } catch (_) { /* ignore */ } };
+    ctl.terminate = () => { dead = true; try { if (w) w.terminate(); } catch (_) { /* ignore */ } };
     return ctl;
   }
 
@@ -255,8 +292,8 @@ AMTrainerMain(self);
       padding: 7px 6px 6px; border: 1px solid var(--rule); border-radius: var(--radius-sm);
       background: color-mix(in srgb, var(--ink-2) 82%, transparent);
     }
-    #ch-${ID} .lab-stat { display: grid; justify-items: center; gap: 1px; min-width: 0; }
-    #ch-${ID} .lab-k { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--mist); white-space: nowrap; }
+    #ch-${ID} .lab-stat { display: grid; justify-items: center; gap: 1px; min-width: 0; cursor: help; }
+    #ch-${ID} .lab-k { font-family: var(--font-mono); font-size: var(--fs-micro); letter-spacing: 0.06em; text-transform: uppercase; color: var(--mist); white-space: nowrap; }
     #ch-${ID} .lab-v { font-family: var(--font-mono); font-size: 13px; color: var(--linen); font-variant-numeric: tabular-nums; white-space: nowrap; transition: color 0.3s; }
     #ch-${ID} .lab-v.is-good { color: var(--verdigris); }
     #ch-${ID} .lab-v.is-weld { color: var(--weld); }
@@ -299,9 +336,10 @@ AMTrainerMain(self);
       #ch-${ID} .lab-stage .fig-top { min-height: 0; }
     }
     @media (max-width: 560px) {
-      #ch-${ID} .lab-stats { padding: 5px 2px 4px; }
-      #ch-${ID} .lab-k { font-size: 8px; letter-spacing: 0.04em; }
-      #ch-${ID} .lab-v { font-size: 11px; }
+      #ch-${ID} .lab-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px 10px; padding: 5px 8px; }
+      #ch-${ID} .lab-stat { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+      #ch-${ID} .lab-k { letter-spacing: 0.02em; }
+      #ch-${ID} .lab-v { font-size: 12px; }
       #ch-${ID} .lab-controls { gap: 6px; }
       #ch-${ID} .lab-controls .btn { min-height: 32px; padding: 5px 11px; font-size: 10px; letter-spacing: 0.08em; }
       #ch-${ID} .lab-controls .btn-primary { min-width: 84px; }
@@ -372,7 +410,7 @@ AMTrainerMain(self);
     id: ID,
     num: 11,
     kicker: 'Live training lab',
-    title: 'Watch a Mind <em>Form</em>',
+    title: 'Watch a Pattern <em>Form</em>',
     lede: 'A real transformer starts as random numbers and learns a small algorithm in your browser while you watch. Its attention begins as an even haze, then crystallises into a pattern you can read.',
     where: 'lab',
     mount(root, ctx) {
@@ -413,10 +451,17 @@ AMTrainerMain(self);
       runs.reverse = makeRun('reverse', newSeed(), 'slow');
 
       // ================================================================ DOM: stage
-      const statDefs = [['step', 'Step'], ['seen', 'Seen'], ['loss', 'Loss'], ['exact', 'Exact'], ['digit', 'Per digit'], ['time', 'Compute']];
+      const statDefs = [
+        ['step', 'Step', 'Training steps so far'],
+        ['seen', 'Seen', 'Training sequences so far, 32 per step'],
+        ['loss', 'Loss', 'Cross-entropy on the eight answer digits, a running average over training batches (the chart shows it on a log scale)'],
+        ['exact', 'Exact', 'Share of 200 held-out random inputs with all eight answer digits right'],
+        ['digit', 'Per digit', 'Share of single answer digits right, on the same 200 held-out inputs'],
+        ['time', 'Compute', 'Seconds spent training so far'],
+      ];
       const statEls = {};
       const stats = el('div', { class: 'lab-stats', role: 'group', 'aria-label': 'Training statistics' },
-        statDefs.map(([k, label]) => el('div', { class: 'lab-stat' }, el('span', { class: 'lab-k' }, label), (statEls[k] = el('span', { class: 'lab-v' }, '—')))));
+        statDefs.map(([k, label, tip]) => el('div', { class: 'lab-stat', title: tip }, el('span', { class: 'lab-k' }, label), (statEls[k] = el('span', { class: 'lab-v' }, '—')))));
       const meta = el('div', { class: 'lab-meta' });
       const live = el('div', { class: 'sr-only', 'aria-live': 'polite' });
       const announce = (s) => { live.textContent = s; };
@@ -434,7 +479,7 @@ AMTrainerMain(self);
       const controls = el('div', { class: 'lab-controls' }, btnTrain, btnReset, btnLoad, segSpeed.el, segTask.el, headBox);
 
       const stageHost = el('div');
-      const capText = `Live model: a real transformer training right now in your browser, with the page's own training code. The threads and maps show its attention on one fixed probe input, refreshed several times a second. Each thread runs from an answer slot (bottom row) to a token it attends to (top row; the arcs underneath are attention to answer digits already written). Thread brightness and width follow the attention weight; map colour follows √weight so a faint haze stays visible. Map rows are the 8 answer slots, columns the 16 positions; the dotted corner is masked (no peeking ahead). The number above each map is the share of attention that lands where the algorithm says it should (input 7\u00a0−\u00a0j for reverse, the next larger digit for sort); an even spread scores about ${UNIFORM.reverse.toFixed(2)} for reverse and ${UNIFORM.sort.toFixed(2)} for sort on these probes. The bottom digits are the model's current best guess for each slot, given the correct digits before it: verdigris when right, madder when wrong, with the right digit in small grey. Seen = training sequences so far (32 per step). Exact = all 8 digits right, on 200 held-out random inputs. The loss is a running average over training batches, on a log scale. Hover, tap or use the arrow keys on an answer slot to isolate its threads; with sort, tap a map to choose its head.`;
+      const capText = `Live model: a real transformer training in your browser, with the page's own code. Threads and maps show its attention on one fixed probe input. Each thread runs from an answer slot (bottom row) to a token it attends to (top row); map rows are the 8 answer slots, columns the 16 positions. The number above each map is the share of attention landing where the algorithm says it should (an even spread scores about ${UNIFORM.reverse.toFixed(2)} for reverse, ${UNIFORM.sort.toFixed(2)} for sort). Exact means all eight digits right on 200 held-out inputs.`;
       const figTitle = el('span', { class: 'fig-title' }, 'Training · reverse');
       const stage = el('div', { class: 'ch-stage lab-stage' },
         el('figure', { class: 'fig' },
@@ -801,7 +846,7 @@ AMTrainerMain(self);
         if (r.running && r.ctl && t - S.lastWeightsReq > 1) { S.lastWeightsReq = t; r.ctl.weights(); }
         if (S.statsDirty) { S.statsDirty = false; renderStats(); }
         if (stageVis.on) drawStage(t, dt);
-        if (benchVis.on) bench.frame(t, dt);
+        if (benchVis.on) { bench.refresh(); bench.frame(t, dt); }
       });
 
       // pointer + keyboard: focus one answer slot, or pick a head by clicking its map
@@ -864,14 +909,17 @@ AMTrainerMain(self);
           bench.onWeights(r);
         } else if (m.type === 'error') {
           r.running = false;
-          announce('Training stopped: ' + m.message);
+          if (m.fatal || !r.ready) r.failed = true;
+          r.error = m.message;
+          announce(r.failed ? 'Training could not start in this browser.' : 'Training stopped: ' + m.message);
           syncUI();
         }
       }
       function startRun(r) {
         if (r.mode === 'shipped') { r.mode = 'live'; segModel.set('own'); bench.setSource('own'); }
-        if (r.done) { syncUI(); return; } // back to the finished run the visitor trained
+        if (r.done || r.failed) { syncUI(); return; } // back to the finished run, or nothing can train here
         ensureCtl(r);
+        if (r.failed) { syncUI(); return; }
         r.ctl.set({ delayMs: r.speed === 'slow' ? SLOW_MS : 0 });
         r.ctl.start();
         r.running = true; r.started = true;
@@ -977,7 +1025,11 @@ AMTrainerMain(self);
         if (v.shipped) {
           meta.innerHTML = `<span class="is-shipped">Shipped weights</span> · <b>${fmtInt(v.params || r.params)}</b> parameters · trained offline with this same code, seed ${v.seed ?? 1} · tested on ${fmtInt(v.testN || 10000)} inputs`;
         } else {
-          const where = !r.ctl ? 'press Train' : lay.phone ? (r.inline ? 'main thread' : 'Web Worker') : r.inline ? 'training on the main thread' : 'training in a Web Worker';
+          const where = r.failed ? (lay.phone ? 'cannot train here' : 'this browser blocked the trainer; Load trained still works')
+            : r.error ? 'training stopped'
+            : !r.ctl ? 'press Train'
+            : !r.ready ? 'starting…'
+            : lay.phone ? (r.inline ? 'main thread' : 'Web Worker') : r.inline ? 'training on the main thread' : 'training in a Web Worker';
           meta.innerHTML = `<b>${fmtInt(r.params)}</b> parameters · seed <b>${r.seed}</b> · ${where}${r.done ? ' · finished' : ''}`;
         }
       }
@@ -988,8 +1040,9 @@ AMTrainerMain(self);
         headBox.hidden = cfgOf(S.task).n_head === 1;
         segHead.set(S.head.sort);
         figTitle.textContent = `Training · ${S.task}`;
-        if (r.mode === 'shipped') { btnTrain.textContent = r.done ? 'Show mine' : r.started ? 'Resume mine' : 'Train my own'; btnTrain.disabled = false; }
+        if (r.mode === 'shipped') { btnTrain.textContent = r.done || r.failed ? 'Show mine' : r.started ? 'Resume mine' : 'Train my own'; btnTrain.disabled = false; }
         else if (r.done) { btnTrain.textContent = 'Trained'; btnTrain.disabled = true; }
+        else if (r.failed) { btnTrain.textContent = 'Cannot train'; btnTrain.disabled = true; }
         else { btnTrain.textContent = r.running ? 'Pause' : r.started ? 'Resume' : 'Train'; btnTrain.disabled = false; }
         btnTrain.setAttribute('aria-pressed', String(r.running));
         btnLoad.disabled = r.mode === 'shipped';
@@ -1000,14 +1053,15 @@ AMTrainerMain(self);
       const benchHost = el('div');
       const benchInput = el('input', { id: 'lab-bench-input', class: 'text-input lab-digits', type: 'text', inputmode: 'numeric', autocomplete: 'off', spellcheck: 'false', maxlength: '8', 'aria-label': 'Eight input digits', 'aria-describedby': 'lab-bench-read' });
       const benchRead = el('div', { id: 'lab-bench-read', class: 'lab-read', 'aria-live': 'polite' });
-      const stressOut = el('span', { class: 'lab-stress-out' });
+      const stressOut = el('span', { class: 'lab-stress-out', 'aria-live': 'polite' });
+      const stressBtn = ui.button({ id: 'lab-bench-stress', label: 'Stress test · 1,000 inputs', onClick: () => bench.stress() });
       const segModel = ui.segmented({ id: 'lab-bench-model', options: [{ value: 'own', label: 'Yours' }, { value: 'shipped', label: 'Shipped' }], value: 'own', onChange: (v) => { bench.setSource(v); } });
       segModel.el.setAttribute('aria-label', 'Which weights to test');
       const segTask2 = ui.segmented({ id: 'lab-bench-task', options: [{ value: 'reverse', label: 'Reverse' }, { value: 'sort', label: 'Sort' }], value: 'reverse', onChange: (v) => { touch(); setTask(v); } });
       segTask2.el.setAttribute('aria-label', 'Task');
       const benchFig = ui.figure({
-        title: 'Test bench', badge: ui.badge('live', 'Live model'), cls: 'lab-bench',
-        caption: 'Live model: the weights you are training (fetched from the worker about once a second while it runs), or the shipped weights. The answer is generated greedily: at each step the most likely token is chosen and fed back in. The bar under each digit is the probability of the digit chosen. Threads show the attention of the head selected above at the step that wrote each digit; hover or tab to a digit to isolate it. The stress test scores fresh random inputs in one batched pass: exact = all eight digits right.',
+        title: 'Greedy answers, digit by digit', badge: ui.badge('live', 'Live model'), cls: 'lab-bench',
+        caption: 'Live model: the weights you are training (fetched from the worker about once a second while it runs), or the shipped weights. The answer is generated greedily: at each step the most likely token is chosen and fed back in. The bar under each digit is the probability of the digit chosen. Threads show the attention of the head selected above at the step that wrote each digit; hover or tab to a digit to isolate it. The stress test scores 1,000 fresh random inputs in four batched passes: exact = all eight digits right.',
       },
       el('div', { class: 'lab-bench-top' },
         el('label', { class: 'lab-in', for: 'lab-bench-input' }, el('span', {}, 'Input · 8 digits'), benchInput),
@@ -1019,7 +1073,7 @@ AMTrainerMain(self);
         el('div', { class: 'lab-bench-side' },
           benchRead,
           el('div', { class: 'lab-stress' },
-            ui.button({ id: 'lab-bench-stress', label: 'Stress test · 1,000 inputs', onClick: () => bench.stress() }),
+            stressBtn,
             stressOut))));
       body0.appendChild(el('section', { class: 'ch-wide lab-sec', 'aria-labelledby': 'lab-bench-h' },
         el('div', { class: 'prose' },
@@ -1036,19 +1090,20 @@ AMTrainerMain(self);
       benchCv.canvas.tabIndex = 0;
 
       const bench = (() => {
-        const B = { digits: TASKLIB.TASKS.reverse.probe.slice(), source: 'own', res: null, t0: -99, focus: -1, net: null, netKey: '' };
+        const B = { digits: TASKLIB.TASKS.reverse.probe.slice(), source: 'own', res: null, t0: -99, focus: -1, net: null, netKey: '', stale: false, stressId: 0 };
         const curNet = () => {
           const r = cur();
           if (B.source === 'shipped') return { net: shippedNet(S.task), key: 'shipped-' + S.task, label: 'shipped weights' };
           return { net: r.ownNet, key: `own-${S.task}-${r.seed}-${r.ownStep}`, label: `your model at step ${fmtInt(r.ownStep)}` };
         };
         const target = () => TASKLIB.TASKS[S.task].fn(B.digits);
+        const cancelStress = () => { B.stressId++; stressBtn.disabled = false; stressOut.textContent = ''; };
         function compute(animate) {
           // announce answers the visitor asked for, not the once-a-second refresh during training
           benchRead.setAttribute('aria-live', animate ? 'polite' : 'off');
           if (B.digits.length !== LEN) { B.res = null; renderRead(); return; }
           const { net, key, label } = curNet();
-          B.netKey = key; B.label = label;
+          B.netKey = key; B.label = label; B.stale = false;
           B.res = decode(net, B.digits);
           if (animate) B.t0 = S.nowT;
           renderRead();
@@ -1180,12 +1235,16 @@ AMTrainerMain(self);
             benchInput.classList.remove('is-bad');
             compute(true);
           },
-          setSource(src) { B.source = src; stressOut.textContent = ''; compute(true); },
+          setSource(src) { B.source = src; cancelStress(); compute(true); },
           onWeights(r) {
             if (r !== cur()) return;
             segModel.el.querySelectorAll('button')[0].textContent = `Yours · step ${fmtInt(r.ownStep)}`;
-            if (B.source === 'own' && B.netKey !== curNet().key) compute(false);
+            if (B.source !== 'own' || B.netKey === curNet().key) return;
+            // decoding is 8 forward passes on the main thread: only while the bench can be seen
+            if (benchVis.on) compute(false); else B.stale = true;
           },
+          /** Called each frame while the bench is on screen: catch up on weights that arrived off-screen. */
+          refresh() { if (B.stale) compute(false); },
           onTask() {
             segTask2.set(S.task);
             const src = cur().mode === 'shipped' ? 'shipped' : 'own';
@@ -1193,16 +1252,28 @@ AMTrainerMain(self);
             B.digits = TASKLIB.TASKS[S.task].probe.slice();
             benchInput.value = B.digits.join('');
             benchInput.classList.remove('is-bad');
-            stressOut.textContent = '';
+            cancelStress();
             const r = cur();
             segModel.el.querySelectorAll('button')[0].textContent = `Yours · step ${fmtInt(r.ownStep)}`;
             compute(true);
           },
           stress() {
+            // 1,000 inputs in four batches of 250, one per task, so the page stays responsive
             const { net, label } = curNet();
-            const n = 1000;
-            const sc = stressTest(net, S.task, n);
-            stressOut.innerHTML = `${label}: <b>${pct(sc.seqAcc, sc.seqAcc > 0.99 && sc.seqAcc < 1 ? 1 : 0)}</b> exact, ${pct(sc.tokenAcc, sc.tokenAcc > 0.99 && sc.tokenAcc < 1 ? 2 : 0)} per digit, on ${fmtInt(n)} fresh random inputs`;
+            const task = S.task, n = 1000, chunk = 250, id = ++B.stressId;
+            let done = 0, seq = 0, tok = 0;
+            stressBtn.disabled = true;
+            stressOut.textContent = `scoring… 0 of ${fmtInt(n)}`;
+            const next = () => {
+              if (id !== B.stressId) return;
+              const sc = stressTest(net, task, chunk);
+              seq += sc.seqAcc * chunk; tok += sc.tokenAcc * chunk; done += chunk;
+              if (done < n) { stressOut.textContent = `scoring… ${fmtInt(done)} of ${fmtInt(n)}`; setTimeout(next, 0); return; }
+              stressBtn.disabled = false;
+              const sa = seq / n, ta = tok / n;
+              stressOut.innerHTML = `${label}: <b>${pct(sa, sa > 0.99 && sa < 1 ? 1 : 0)}</b> exact, ${pct(ta, ta > 0.99 && ta < 1 ? 2 : 0)} per digit, on ${fmtInt(n)} fresh random inputs`;
+            };
+            setTimeout(next, 0);
           },
         };
         return api;

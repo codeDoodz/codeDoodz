@@ -5,24 +5,70 @@
   const el = AM.el;
   const ui = (AM.ui = AM.ui || {});
 
-  /** Honesty badge: 'live' | 'toy' | 'illustration'. */
-  ui.badge = (kind = 'illustration', text) => {
-    const label = text || { live: 'Live model', toy: 'Toy numbers', illustration: 'Illustration' }[kind] || kind;
-    const title = {
-      live: 'Computed right now by the real tiny transformer that ships with this page',
-      toy: 'Small hand-built numbers chosen to show the mechanism clearly',
-      illustration: 'An artistic depiction, not literal numbers',
-    }[kind];
-    return el('span', { class: `badge badge-${kind}`, title }, label);
+  const BADGE_LABEL = { live: 'Live model', toy: 'Toy numbers', illustration: 'Illustration' };
+  const BADGE_TITLE = {
+    live: 'Computed right now by the real tiny transformer that ships with this page',
+    toy: 'Small hand-built numbers chosen to show the mechanism clearly',
+    illustration: 'An artistic depiction, not literal numbers',
+  };
+  /**
+   * Honesty badge: kind 'live' | 'toy' | 'illustration'. The canonical label always
+   * shows, so a badge reads as one of three things at a glance; `note` is an optional
+   * qualifier drawn after a thin divider: ui.badge('toy', 'exact formula').
+   * (A note that starts with the canonical label, like 'Live model · the pattern',
+   * has that prefix dropped.)
+   */
+  ui.badge = (kind = 'illustration', note) => {
+    const label = BADGE_LABEL[kind] || kind;
+    let q = note == null ? '' : String(note).trim();
+    const lower = q.toLowerCase(), canon = label.toLowerCase();
+    if (lower === canon) q = '';
+    else if (lower.startsWith(canon)) q = q.slice(label.length).replace(/^\s*[·:|,\-–]\s*/, '');
+    else if (kind === 'live' && /^live\s+/i.test(q)) q = q.replace(/^live\s+/i, '');
+    if (/^[A-Z][a-z]/.test(q)) q = q[0].toLowerCase() + q.slice(1); // 'Exact formula' → 'exact formula'; 'BPE' stays
+    const title = (BADGE_TITLE[kind] || '') + (q ? ` (${q})` : '');
+    return el('span', { class: `badge badge-${kind}`, title: title || null },
+      label, q ? el('span', { class: 'badge-note' }, q) : null);
   };
 
-  /** <figure> with a top row (title + badge), body content and caption. */
-  ui.figure = ({ title, badge, caption, cls } = {}, ...content) => {
+  /**
+   * <figure> with a top row (title + badge), body content and caption.
+   * framed: true puts the body in a bordered --ink-2 frame with the title row
+   * outside it. Frame every sticky stage and free-play figure; leave inline
+   * diagrams inside prose unframed.
+   */
+  ui.figure = ({ title, badge, caption, cls, framed } = {}, ...content) => {
     const top = (title || badge) ? el('div', { class: 'fig-top' },
       title ? el('span', { class: 'fig-title' }, title) : el('span'),
       badge ? (typeof badge === 'string' ? ui.badge(badge) : badge) : null) : null;
-    return el('figure', { class: 'fig' + (cls ? ' ' + cls : '') }, top, ...content,
+    const body = framed ? el('div', { class: 'fig-frame' }, ...content) : content;
+    return el('figure', { class: 'fig' + (framed ? ' is-framed' : '') + (cls ? ' ' + cls : '') }, top, body,
       caption ? el('figcaption', { html: caption }) : null);
+  };
+
+  /**
+   * Example chips ("try this sentence"). options: strings or {value, label, title}.
+   * opts: {id, label (aria group label), selected, onPick(value, i)}.
+   * Returns {el, chips, get(), set(value, fire)}.
+   */
+  ui.chips = (options = [], { id, label = 'Examples', selected, onPick } = {}) => {
+    const opts = options.map((o) => (typeof o === 'object' ? o : { value: o, label: String(o) }));
+    let cur = selected;
+    const chips = opts.map((o, i) => el('button', {
+      type: 'button', class: 'chip', id: id ? `${id}-${i}` : null, title: o.title || null,
+      'aria-pressed': String(o.value === cur),
+      onclick: () => api.set(o.value, true),
+    }, o.label));
+    const api = {
+      el: el('div', { class: 'chips', role: 'group', 'aria-label': label }, chips), chips,
+      get: () => cur,
+      set: (v, fire = false) => {
+        cur = v;
+        chips.forEach((c, i) => c.setAttribute('aria-pressed', String(opts[i].value === v)));
+        if (fire && onPick) onPick(v, opts.findIndex((o) => o.value === v));
+      },
+    };
+    return api;
   };
 
   /** Range slider. Returns {el, input, get(), set(v, fire)}. */
@@ -204,8 +250,8 @@
       el('text', { class: 'g-x', x: 80, y: 90 }, '×N'),
       // residual stream: the long thread through the block
       el('line', { class: wcls('resid'), x1: 18, y1: 118, x2: 18, y2: 54 }),
-      node('attn', 26, 96, 44, 14, 'attention'),
-      node('mlp', 26, 66, 44, 14, 'mlp'),
+      node('attn', 23, 96, 50, 14, 'attention'),
+      node('mlp', 23, 66, 50, 14, 'mlp'),
       el('path', { class: wcls('resid'), d: 'M18 112 H48 V110 M48 96 V88 H18 M18 82 H48 V80 M48 66 V58 H18' }),
       el('line', { class: wcls('unembed'), x1: 39, y1: 52, x2: 39, y2: 40 }),
       node('unembed', 14, 26, 50, 12, 'unembed'),
@@ -222,7 +268,7 @@
       el('line', { class: wcls('embed'), x1: 88, y1: 20, x2: 98, y2: 20 }),
       el('rect', { class: 'g-brace' + (on.has('stack') ? ' is-on' : ''), x: 98, y: 3, width: 108, height: 34, rx: 6 }),
       el('line', { class: wcls('resid'), x1: 100, y1: 33, x2: 204, y2: 33 }),
-      node('attn', 104, 9, 46, 16, 'attention'),
+      node('attn', 102, 9, 50, 16, 'attention'),
       node('mlp', 156, 9, 44, 16, 'mlp'),
       el('text', { class: 'g-x', x: 186, y: 1.5 }, '×N'),
       el('line', { class: wcls('unembed'), x1: 206, y1: 20, x2: 214, y2: 20 }),
@@ -237,7 +283,7 @@
     .glyph-box .glyph-h { display: none; }
     @media (max-width: 760px) {
       .glyph-box .glyph-v { display: none; }
-      .glyph-box .glyph-h { display: block; width: min(300px, 100%); height: auto; }
+      .glyph-box .glyph-h { display: block; width: 100%; max-width: 420px; height: auto; }
     }
   `);
 

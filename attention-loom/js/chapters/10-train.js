@@ -156,14 +156,7 @@
     #ch-${ID} .tr-note { display: grid; gap: var(--space-2); align-content: start; padding: var(--space-4); border-left: 2px solid var(--c, var(--weld)); background: linear-gradient(90deg, color-mix(in srgb, var(--c, var(--weld)) 7%, transparent), transparent 70%); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
     #ch-${ID} .tr-note h4 { margin: 0; font-family: var(--font-mono); font-size: var(--fs-micro); font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--c, var(--weld)); }
     #ch-${ID} .tr-note p { color: var(--linen-dim); font-size: 0.95rem; line-height: 1.55; }
-
-    /* after pretraining */
-    #ch-${ID} .tr-card { position: relative; display: grid; gap: var(--space-2); align-content: start; padding: var(--space-5) var(--space-4) var(--space-4); border: 1px solid var(--rule); border-radius: var(--radius); background: var(--ink-2); overflow: hidden; }
-    #ch-${ID} .tr-card::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 4px; background: repeating-linear-gradient(90deg, var(--c) 0 7px, transparent 7px 10px, color-mix(in srgb, var(--c) 55%, transparent) 10px 13px, transparent 13px 16px); }
-    #ch-${ID} .tr-card .tr-card-n { font-family: var(--font-display); font-style: italic; font-size: 2.1rem; line-height: 1; color: transparent; -webkit-text-stroke: 1px var(--c); }
-    #ch-${ID} .tr-card h4 { margin: 0; font-family: var(--font-body); font-size: 1.12rem; font-weight: 600; color: var(--linen); }
-    #ch-${ID} .tr-card p { color: var(--linen-dim); font-size: 0.95rem; line-height: 1.55; }
-    #ch-${ID} .tr-card .tr-card-tag { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--mist); }
+    #ch-${ID} .tr-handoff { max-width: var(--prose); }
   `);
 
   // ==================================================================== 1. the training-loop stage
@@ -1584,8 +1577,8 @@
           'Shift the text left by one and every position gets a target: after <em>the</em> comes <em>cat</em>, after <em>cat</em> comes <em>sat</em>, and so on.',
           'The <span class="term">causal mask</span> lets position i see only tokens up to i, so no position can peek at its own answer. A single forward pass makes a prediction at every position at once: each small histogram is one position\'s guess, with the true next token in gold. These five tokens are five training examples. A model with a 4,096-token context gets 4,096 from every sequence it reads.'),
         step('3 · The loss', 'Score the surprise',
-          'At each position, look up the probability the model gave to the token that really came next. Call it p. The loss at that position is <span class="math">−log p</span>, the <span class="term">cross-entropy</span>.',
-          '<div class="math block">L = −(1/T) Σ<sub>t</sub> log p<sub>θ</sub>(x<sub>t+1</sub> | x<sub>≤t</sub>)</div>',
+          'At each position, look up the probability the model gave to the token that really came next. Call it p. The loss at that position is <span class="math">−ln p</span> (the natural log), the <span class="term">cross-entropy</span>.',
+          '<div class="math block">L = −(1/T) Σ<sub>t</sub> ln p<sub>θ</sub>(x<sub>t+1</sub> | x<sub>≤t</sub>)</div>',
           `A sure, correct guess costs almost nothing. A confident miss costs a lot. The loss for one training step is the average over every position of every sequence in the <span class="term">minibatch</span>. Here the five red drips average to <strong>${LOSS_BEFORE.toFixed(2)}</strong> nats.`),
         step('4 · Backpropagation', 'Send the blame backwards',
           'Now ask, for every parameter in the model: if it changed by a tiny amount, how much would the loss change? That number is the parameter\'s <span class="term">gradient</span>, <span class="math">∂L/∂θ</span>.',
@@ -1593,10 +1586,11 @@
         step('5 · The update', 'Take a small step downhill',
           '<div class="math block">θ ← θ − η · ∂L/∂θ</div>',
           `Every parameter moves a little against its gradient. The step size η is the <span class="term">learning rate</span>. After this step the right answers are more likely, and the mean loss falls from <strong>${LOSS_BEFORE.toFixed(2)}</strong> to <strong>${LOSS_AFTER.toFixed(2)}</strong>. Our toy step is far bigger than a real one, so that you can see it. In a real run one step barely moves the loss, and it falls over many thousands of steps.`,
-          'Real training uses an optimizer such as <span class="term">AdamW</span>, which sizes each parameter\'s step using running averages of its recent gradients and their squares. The learning rate follows a schedule: it warms up over the first steps, then slowly decays.'),
-        step('6 · Repeat', 'Then do it again, for months',
+          'Real training uses an optimiser such as <span class="term">AdamW</span>, which sizes each parameter\'s step using running averages of its recent gradients and their squares. The learning rate follows a schedule: it warms up over the first steps, then slowly decays.'),
+        step('6 · Repeat', 'Then do it again, for weeks or months',
           'Every step uses a fresh minibatch, often millions of tokens. GPT-3 trained on about 300 billion tokens in 2020. Meta reported more than 15 trillion for Llama 3 in 2024.',
-          'The loss falls smoothly and predictably. Bigger models trained on more data reach lower loss, along curves close to power laws. Labs use these <span class="term">scaling laws</span> to plan training runs before they start.'),
+          'The loss falls smoothly and predictably. Bigger models trained on more data reach lower loss, along curves close to power laws. Labs use these <span class="term">scaling laws</span> to plan training runs before they start.',
+          'This pretraining makes a model that continues text. Two shorter rounds turn it into an assistant: <span class="term">supervised fine-tuning</span> on example conversations, then learning from human feedback on which of two answers people prefer.'),
       ];
       const prose = el('div', { class: 'ch-prose' }, steps);
       body.appendChild(el('div', { class: 'ch-split' }, stage, prose));
@@ -1622,7 +1616,7 @@
           el('h3', { id: 'tr-ce-h' }, 'What does a wrong guess cost?'),
           el('p', { html: 'Below is the guess you saw at the last position above, for the word after <em>the cat sat on the</em>. The training text says the answer is <strong>mat</strong>; pick another word to change it. Drag the bars or use the slider. However you move them, the probabilities still sum to 1.' }),
           el('p', { html: 'The loss is <span class="math">−ln p(correct)</span>, so only the bar on the right answer counts directly. As that probability falls toward 0, the loss climbs without limit. That is why confident mistakes are so expensive.' }),
-          el('p', { html: 'The arrows show which way one gradient step pushes each word\'s <span class="term">logit</span>, its raw score before the softmax. That gradient has a tidy form, <span class="math">∂L/∂z<sub>i</sub> = p<sub>i</sub> − y<sub>i</sub></span>, where y is 1 for the right word and 0 for the rest. So a step raises the right word\'s logit and lowers every other logit in proportion to its probability. The dashed ticks mark where each bar will land. After the softmax, a rare wrong word can still gain a little when a popular wrong word loses a lot; try <strong>Confident &amp; wrong</strong> to see it. Press <strong>Gradient step</strong> a few times to watch the loss fall.' })),
+          el('p', { html: 'The arrows show which way one gradient step pushes each word\'s logit. That gradient has a tidy form, <span class="math">∂L/∂z<sub>i</sub> = p<sub>i</sub> − y<sub>i</sub></span>, where y is 1 for the right word and 0 for the rest. So a step raises the right word\'s logit and lowers every other logit in proportion to its probability. The dashed ticks mark where each bar will land. Press <strong>Gradient step</strong> a few times to watch the loss fall.' })),
         el('div', { class: 'panel tr-ce-panel' },
           ui.figure({
             title: 'Cross-entropy at one position', badge: 'toy',
@@ -1645,56 +1639,29 @@
           el('span', { class: 'tr-kicker' }, 'Gradient descent'),
           el('h3', { id: 'tr-land-h' }, 'A bead rolling downhill'),
           el('p', { html: 'Picture the loss as a landscape. Every possible setting of the parameters is a point on the ground, and the height there is the loss. Training starts at a random point and walks downhill, one gradient step at a time. The gradient points uphill, so each step goes the opposite way: <span class="math">θ ← θ − η∇L</span>.' }),
-          el('p', { html: 'This surface is made up, with only two parameters so that it can be drawn. A real model\'s landscape has billions of dimensions. Click or tap the cloth to drop beads. Then change the learning rate and press <strong>Replay</strong> to send the same beads down again.' })),
+          el('p', { html: 'This surface is made up, with only two parameters so that it can be drawn. A real model\'s landscape has billions of dimensions. Click or tap the cloth to drop beads; where a bead starts decides which valley it ends in. Then change the learning rate and press <strong>Replay</strong> to send the same beads down again.' })),
         el('div', { class: 'panel tr-land-panel' },
           ui.figure({
             title: 'The loss landscape', badge: 'illustration',
             caption: 'Illustration: a made-up function of two parameters, standing in for a landscape with billions of dimensions. The descent itself is exact for this function. Each step uses the true analytic gradient and applies θ ← θ − η∇L, or with momentum v ← 0.9v − η∇L, θ ← θ + v. Minibatch noise adds random error to each gradient. Dots along a trail mark single steps; the faint drifting grains follow the downhill direction everywhere.',
           },
           landHost, landCtl, landRead)),
-        el('div', { class: 'grid-3' },
+        el('div', { class: 'grid-2' },
           el('div', { class: 'tr-note', style: '--c: var(--weld)' },
             el('h4', {}, 'Learning rate'),
             el('p', { html: 'Too small and the bead crawls: at η = 0.003 it needs hundreds of steps to reach the bottom of a valley. Too big and it overshoots, bouncing between the valley walls or flying off the map. Real runs choose η carefully and lower it as training goes on.' })),
           el('div', { class: 'tr-note', style: '--c: var(--verdigris)' },
-            el('h4', {}, 'Momentum'),
-            el('p', { html: 'The bead keeps a running velocity, so it rolls through small bumps and builds speed along long, narrow valleys. With a large η it overshoots badly. Adam combines momentum with a separate step size for every parameter.' })),
-          el('div', { class: 'tr-note', style: '--c: var(--cochineal)' },
-            el('h4', {}, 'Minibatch noise'),
-            el('p', { html: 'Real training estimates the gradient from a random minibatch, so each step is slightly off. This is <span class="term">stochastic gradient descent</span>. The jitter can even help, shaking a bead out of a shallow dip.' })))));
+            el('h4', {}, 'Momentum and minibatch noise'),
+            el('p', { html: 'With momentum the bead keeps a running velocity, so it rolls through small bumps and speeds along narrow valleys. Minibatch noise copies real training, where each gradient comes from a random sample of the data and is slightly off: <span class="term">stochastic gradient descent</span>. The jitter can even shake a bead out of a shallow dip.' }))),
+        // hand-off to the Lab
+        el('p', { class: 'caption tr-handoff', html: 'Want to see a loss curve fall for real? In the <a href="#ch-lab">next chapter</a> a small transformer trains from scratch in your browser, using this same loop.' })));
       buildLandscape(ctx, { canvas: landHost, ctl: landCtl, read: landRead });
 
-      body.appendChild(el('div', { class: 'prose' },
-        el('p', { html: 'Where a bead starts decides which valley it ends in, and in two dimensions it is easy to get stuck. High-dimensional landscapes are thought to be kinder: with billions of directions to choose from, most flat places are saddles that still have some way down. Large models trained from different random starts end up with very similar loss.' })));
-
-      // ---------------------------------------------------------------- 4. after pretraining
-      body.appendChild(el('section', { class: 'ch-wide tr-sec', 'aria-labelledby': 'tr-post-h' },
-        el('div', { class: 'prose' },
-          el('span', { class: 'tr-kicker' }, 'After pretraining'),
-          el('h3', { id: 'tr-post-h' }, 'From text predictor to assistant'),
-          el('p', { html: 'A pretrained model continues text. Ask it a question and it may answer, or it may write three more questions, because that is often what follows a question on the web. Two more rounds of training turn it into an assistant.' })),
-        el('div', { class: 'grid-3' },
-          el('div', { class: 'tr-card', style: '--c: var(--weld)' },
-            el('span', { class: 'tr-card-n', 'aria-hidden': 'true' }, '1'),
-            el('h4', {}, 'Pretraining'),
-            el('span', { class: 'tr-card-tag' }, 'next-token loss · trillions of tokens'),
-            el('p', {}, 'The loop in this chapter, run on web pages, books and code. This is where the model picks up most of its knowledge and skills, and usually where most of the compute goes.')),
-          el('div', { class: 'tr-card', style: '--c: var(--verdigris)' },
-            el('span', { class: 'tr-card-n', 'aria-hidden': 'true' }, '2'),
-            el('h4', {}, 'Supervised fine-tuning'),
-            el('span', { class: 'tr-card-tag' }, 'same loss · curated conversations'),
-            el('p', {}, 'More training with the same loss on a much smaller set of example conversations, written or checked by people. The model picks up the format and tone of a helpful reply.')),
-          el('div', { class: 'tr-card', style: '--c: var(--cochineal)' },
-            el('span', { class: 'tr-card-n', 'aria-hidden': 'true' }, '3'),
-            el('h4', {}, 'Learning from feedback'),
-            el('span', { class: 'tr-card-tag' }, 'RLHF and relatives'),
-            el('p', { html: 'People compare pairs of answers. In <span class="term">RLHF</span> a reward model learns their preferences, and reinforcement learning tunes the model toward answers that score well. Methods such as DPO learn from the comparisons directly. Many recent models also get reinforcement learning on tasks whose answers can be checked, such as math and code.' }))),
-        el('p', { class: 'caption', html: 'Want to see a loss curve fall for real? In the <a href="#ch-lab">next chapter</a> a small transformer trains from scratch in your browser, using this same loop.' })));
 
       // ---------------------------------------------------------------- key idea
       body.appendChild(el('div', { class: 'callout' },
         el('span', { class: 'callout-label' }, 'Key idea'),
-        el('p', { html: 'Training repeats one loop. Predict the next token at every position, score each guess with <strong>−log p</strong>, use <strong>backpropagation</strong> to get the gradient of every parameter, and take a small step <strong>downhill</strong>. Run that loop for hundreds of thousands of steps over trillions of tokens, and numbers that started out random end up encoding grammar, facts and skills.' })));
+        el('p', { html: 'Training repeats one loop. Predict the next token at every position, score each guess with <strong>−ln p</strong>, use <strong>backpropagation</strong> to get the gradient of every parameter, and take a small step <strong>downhill</strong>. Run that loop for hundreds of thousands of steps over trillions of tokens, and numbers that started out random end up encoding grammar, facts and skills.' })));
     },
   });
 })();

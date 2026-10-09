@@ -5,16 +5,18 @@
  * the 2017 sinusoidal encoding read as a bank of clock hands turning at
  * geometrically spaced speeds; why that encodes relative offsets (the dot
  * product of two encodings depends only on their offset, and a shift is a
- * rotation); learned absolute positions; RoPE (rotate q and k) and ALiBi.
+ * rotation); learned absolute positions, read live from the tiny model.
+ * RoPE gets one forward pointer here; its lab lives at the end of chapter 4,
+ * where queries and keys are known.
  *
  * Data, all computed in this file:
  *  - Bag stage: a TOY one-head attention layer (d = 8, seeded random
  *    embeddings and W_Q / W_K / W_V, no causal mask). Weights and outputs are
  *    recomputed every frame. The bag is a 2-D PCA shadow of the 8-d inputs.
- *  - Dial anatomy + clockwork: the exact sinusoidal formula. Similarity =
- *    cosine of exact encodings (every encoding has length √(d/2)).
- *  - RoPE lab: toy q and k (d = 8), rotated exactly with θ_i = 10000^(−2i/d).
- *  - ALiBi: exact softmax of the distance penalty for three head slopes.
+ *  - Clockwork: the exact sinusoidal formula. Similarity = cosine of exact
+ *    encodings (every encoding has length √(d_model/2)).
+ *  - Learned table (live): the tiny model's own position rows, wpe[t], read
+ *    through its forward pass.
  */
 (() => {
   const AM = window.AM;
@@ -40,16 +42,28 @@
   };
   /** Number with a typographic minus. */
   const fmt = (x, n = 2) => { const s = Math.abs(x).toFixed(n); return (x < 0 && Number(s) !== 0 ? '−' : '') + s; };
-  /** Canvas text with a subscript, drawn by hand (the mono face has no subscript digits). */
+  /** Canvas text with a subscript, drawn by hand (the mono face has no subscript digits). Subscripts never drop below 9px. */
   function subText(g, base, subscript, x, y, o = {}) {
-    const size = o.size || 10, role = o.role || 'mono';
+    const size = o.size || 10, role = o.role || 'mono', ss = Math.max(9, size * 0.72);
     const bw = DR.measure(g, base, size, role, o.weight);
-    const sw = DR.measure(g, subscript, size * 0.72, role, o.weight);
+    const sw = DR.measure(g, subscript, ss, role, o.weight);
     const x0 = o.align === 'center' ? x - (bw + sw) / 2 : o.align === 'right' ? x - bw - sw : x;
     DR.text(g, base, x0, y, { ...o, size, role, align: 'left' });
-    DR.text(g, subscript, x0 + bw + 0.5, y + size * 0.28, { ...o, size: size * 0.72, role, align: 'left' });
+    DR.text(g, subscript, x0 + bw + 0.5, y + size * 0.28, { ...o, size: ss, role, align: 'left' });
   }
   const thousands = (n) => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  /**
+   * Is this element near the viewport? The chapter is long, and AM runs every
+   * loop while any of it is on screen, so each figure checks its own canvas
+   * and skips frames while it is out of sight.
+   */
+  function inView(node, margin = '80px') {
+    const s = { on: true };
+    if (typeof IntersectionObserver !== 'undefined') {
+      new IntersectionObserver((es) => { for (const e of es) s.on = e.isIntersecting; }, { rootMargin: `${margin} 0px ${margin} 0px` }).observe(node);
+    }
+    return s;
+  }
 
   // ======================================================================
   // 1. The sinusoidal encoding (Vaswani et al., 2017)
@@ -139,19 +153,6 @@
       g.closePath(); g.fill();
     }
     g.restore();
-  }
-
-  /** Arrow from the centre of a dial (math-angle convention). */
-  function dialArrow(g, cx, cy, len, ang, color, o = {}) {
-    const tx = cx + Math.cos(ang) * len, ty = cy - Math.sin(ang) * len;
-    g.save();
-    g.strokeStyle = AM.rgba(color, 0.2 * (o.alpha ?? 1));
-    g.lineWidth = (o.width || 2) * 3;
-    g.lineCap = 'round';
-    if (!o.dash) { g.beginPath(); g.moveTo(cx, cy); g.lineTo(tx, ty); g.stroke(); }
-    g.restore();
-    DR.arrow(g, cx, cy, tx, ty, { color, width: o.width || 2, head: o.head || 9, alpha: o.alpha ?? 1, dash: o.dash });
-    return { x: tx, y: ty };
   }
 
   // ======================================================================
@@ -266,7 +267,7 @@
     const readout = el('p', { class: 'pos-readout' });
     const fig = AM.ui.figure({
       title: 'Two sentences, one bag', badge: 'toy', cls: 'pos-bag-fig',
-      caption: 'Toy numbers: three random 8-number embeddings and one attention head with random W<sub>Q</sub>, W<sub>K</sub>, W<sub>V</sub> and no causal mask, all computed live. The bag is a 2-D shadow (PCA) of the 8-d input vectors; threads inside it are attention weights, thicker for heavier weights. Bars are vectors, blue positive and red negative.',
+      caption: 'Toy numbers: three random 8-number embeddings pass through one attention step with random weights, the kind chapter 4 opens up, all computed live. Here every word sees every other word. The bag is a 2-D shadow (PCA) of the 8-number input vectors; threads inside it are attention weights, thicker for heavier weights. Bars are vectors, blue positive and red negative.',
     }, cv.wrap, readout);
 
     /** Swap phase: 0 = "dog bites man", 1 = "man bites dog". */
@@ -336,6 +337,44 @@
       }
     }
 
+    /** The basket never changes between frames: paint it once per size into its own layer. */
+    let bagLayer = null;
+    function renderBag() {
+      const G = st.G;
+      if (!G || !cv.w) return;
+      const b = G.bag;
+      bagLayer = bagLayer || document.createElement('canvas');
+      bagLayer.width = Math.max(1, Math.round(cv.w * cv.dpr)); bagLayer.height = Math.max(1, Math.round(cv.h * cv.dpr));
+      const g = bagLayer.getContext('2d');
+      g.setTransform(cv.dpr, 0, 0, cv.dpr, 0, 0);
+      g.save();
+      g.beginPath(); g.ellipse(b.cx, b.cy, b.rx, b.ry, 0, 0, TAU);
+      const bg = g.createRadialGradient(b.cx, b.cy - b.ry * 0.4, 4, b.cx, b.cy, b.rx);
+      bg.addColorStop(0, AM.rgba(AM.col.ink3, 0.95));
+      bg.addColorStop(1, AM.rgba(AM.col.ink2, 0.9));
+      g.fillStyle = bg; g.fill();
+      g.clip();
+      DR.weave(g, b.cx - b.rx, b.cy - b.ry, b.rx * 2, b.ry * 2, { step: 7, alpha: 0.045 });
+      g.restore();
+      g.save();
+      g.beginPath(); g.ellipse(b.cx, b.cy, b.rx, b.ry, 0, 0, TAU);
+      g.strokeStyle = AM.rgba(AM.dye.weld, 0.07); g.lineWidth = 9; g.stroke();
+      g.strokeStyle = AM.rgba(AM.dye.weld, 0.3); g.lineWidth = 1; g.stroke();
+      // braided rim: short slanted stitches all the way round, like a basket's edge
+      const nSt = Math.round((Math.PI * (b.rx + b.ry)) / 10);
+      g.strokeStyle = AM.rgba(AM.dye.weld, 0.17); g.lineWidth = 1.1; g.lineCap = 'round';
+      g.beginPath();
+      for (let k = 0; k < nSt; k++) {
+        const t = (k / nSt) * TAU, x = b.cx + Math.cos(t) * b.rx, y = b.cy + Math.sin(t) * b.ry;
+        const tx = -Math.sin(t) * b.rx, ty = Math.cos(t) * b.ry, tl = Math.hypot(tx, ty); // tangent
+        const nx = Math.cos(t) * b.ry, ny = Math.sin(t) * b.rx, nl = Math.hypot(nx, ny);  // normal
+        const ux = (tx / tl) * 2.6 + (nx / nl) * 3, uy = (ty / tl) * 2.6 + (ny / nl) * 3;
+        g.moveTo(x - ux, y - uy); g.lineTo(x + ux, y + uy);
+      }
+      g.stroke();
+      g.restore();
+    }
+
     function draw() {
       const G = st.G;
       if (!G || !cv.w) return;
@@ -392,35 +431,10 @@
         g.beginPath(); g.moveTo(x, G.seatY + 10); g.lineTo(x, G.tokY - 14); g.stroke(); g.restore();
       }
 
-      // ---- bag (woven basket)
+      // ---- bag (woven basket, cached)
       const b = G.bag;
-      g.save();
-      g.beginPath(); g.ellipse(b.cx, b.cy, b.rx, b.ry, 0, 0, TAU);
-      const bg = g.createRadialGradient(b.cx, b.cy - b.ry * 0.4, 4, b.cx, b.cy, b.rx);
-      bg.addColorStop(0, AM.rgba(AM.col.ink3, 0.95));
-      bg.addColorStop(1, AM.rgba(AM.col.ink2, 0.9));
-      g.fillStyle = bg; g.fill();
-      g.clip();
-      DR.weave(g, b.cx - b.rx, b.cy - b.ry, b.rx * 2, b.ry * 2, { step: 7, alpha: 0.045 });
-      g.restore();
-      g.save();
-      g.beginPath(); g.ellipse(b.cx, b.cy, b.rx, b.ry, 0, 0, TAU);
-      g.strokeStyle = AM.rgba(AM.dye.weld, 0.07); g.lineWidth = 9; g.stroke();
-      g.strokeStyle = AM.rgba(AM.dye.weld, 0.3); g.lineWidth = 1; g.stroke();
-      // braided rim: short slanted stitches all the way round, like a basket's edge
-      const nSt = Math.round((Math.PI * (b.rx + b.ry)) / 10);
-      g.strokeStyle = AM.rgba(AM.dye.weld, 0.17); g.lineWidth = 1.1; g.lineCap = 'round';
-      g.beginPath();
-      for (let k = 0; k < nSt; k++) {
-        const t = (k / nSt) * TAU, x = b.cx + Math.cos(t) * b.rx, y = b.cy + Math.sin(t) * b.ry;
-        const tx = -Math.sin(t) * b.rx, ty = Math.cos(t) * b.ry, tl = Math.hypot(tx, ty); // tangent
-        const nx = Math.cos(t) * b.ry, ny = Math.sin(t) * b.rx, nl = Math.hypot(nx, ny);  // normal
-        const ux = (tx / tl) * 2.6 + (nx / nl) * 3, uy = (ty / tl) * 2.6 + (ny / nl) * 3;
-        g.moveTo(x - ux, y - uy); g.lineTo(x + ux, y + uy);
-      }
-      g.stroke();
-      g.restore();
-      DR.text(g, 'WHAT ATTENTION RECEIVES', b.cx, b.cy + b.ry - (G.small ? 9 : 13), { size: G.small ? 8 : 9, role: 'mono', color: AM.col.mist, align: 'center', letterSpacing: '0.14em' });
+      if (bagLayer) g.drawImage(bagLayer, 0, 0, cv.w, cv.h);
+      DR.text(g, 'WHAT ATTENTION RECEIVES', b.cx, b.cy + b.ry - (G.small ? 9 : 13), { size: G.small ? 8.5 : 9, role: 'mono', color: AM.col.mist, align: 'center', letterSpacing: '0.14em' });
 
       const beads = R.X.map((x) => bead(G, x));
       const ghosts = B.E.map((e) => bead(G, e));
@@ -470,7 +484,7 @@
           g.beginPath(); g.arc(gh.x, gh.y, 5, 0, TAU); g.stroke(); g.restore();
           if (Math.hypot(bd.x - gh.x, bd.y - gh.y) > 10) {
             DR.arrow(g, gh.x, gh.y, bd.x, bd.y, { color: AM.dye.weld, width: 1.4, head: 7, alpha: 0.9 * a, dash: [3, 3] });
-            subText(g, '+p', String(Math.round(seats[wi])), (gh.x + bd.x) / 2 + 4, (gh.y + bd.y) / 2 - 7, { size: 10.5, color: AM.dye.weld, alpha: a });
+            subText(g, '+p', String(Math.round(seats[wi])), (gh.x + bd.x) / 2 + 4, (gh.y + bd.y) / 2 - 7, { size: 11.5, color: AM.dye.weld, alpha: a });
           }
           DR.text(g, 'e', gh.x - 9, gh.y + 3, { size: 10, role: 'mono', color: AM.col.linenDim, align: 'right', alpha: 0.8 * a });
         });
@@ -528,8 +542,10 @@
       setReadout();
     }
 
-    cv.onResize((w, h) => { st.G = geom(w, h); draw(); });
+    cv.onResize((w, h) => { st.G = geom(w, h); renderBag(); draw(); });
+    const seen = inView(cv.wrap);
     ctx.loop((t, dt) => {
+      if (!seen.on) return; // off-screen: no time passes and nothing is drawn
       st.clock += dt;
       // reduced motion: the loop runs at ~2 fps, so swap in one clean cut instead of gliding
       st.u = AM.reducedMotion ? Math.floor(st.clock / (CYC / 2)) % 2 : swapU(st.clock);
@@ -540,96 +556,6 @@
     });
     setReadout();
     return { el: fig, setStep, B };
-  }
-
-  // ======================================================================
-  // 5a. Figure B0: how to read one dial
-  // ======================================================================
-
-  function mountAnatomy(ctx) {
-    const LAST = 12;                       // the dial ticks through positions 0…12, then rewinds
-    const st = { pos: 0, anim: 0, from: 0, k: 1, dur: 0.4, fn: EASE.outBack, hold: 0, playing: true };
-    const SIN = AM.dye.cochineal, COS = AM.dye.verdigris;
-    // Side-by-side layout needs room for the dial (2R + margins) plus ~205px of formula text.
-    const NARROW_W = 480;
-    const wideR = (w, h) => Math.min(h * 0.36, w * 0.27, 128, (w - 283) / 2);
-    const cv = ctx.canvas(null, {
-      height: (w) => (w < NARROW_W ? Math.round(Math.min(w * 0.33, 120) * 2 + 156) : clamp(Math.round(w * 0.74), 300, 380)),
-      label: 'One clock hand of the positional encoding. Its tip has two coordinates: how far across is the cosine value and how far up is the sine value. Beads on the rim mark where the hand pointed at earlier positions, each one radian further round.',
-    });
-
-    function draw() {
-      if (!cv.w) return;
-      const g = cv.g, w = cv.w, h = cv.h;
-      cv.clear();
-      const narrow = w < NARROW_W;
-      const R = narrow ? Math.min(w * 0.33, 120) : wideR(w, h);
-      const cx = narrow ? w / 2 : R + 34, cy = narrow ? R + 34 : h / 2;
-      const a = st.anim, th = a; // hand 0: ω₀ = 1 radian per position
-      const pNow = Math.round(clamp(a, 0, LAST));
-
-      dialFace(g, cx, cy, R, { ticks: 24, cross: true, rim: AM.rgba(AM.dye.weld, 0.4), rimWidth: 1.2 });
-      g.save(); g.strokeStyle = AM.rgba(AM.dye.weld, 0.07); g.lineWidth = 9;
-      g.beginPath(); g.arc(cx, cy, R + 5, 0, TAU); g.stroke(); g.restore();
-
-      // rim beads: where the hand pointed at each earlier position, one radian apart
-      for (let k = 0; k <= Math.min(LAST, Math.floor(a + 1e-6)); k++) {
-        const recent = 1 - clamp((a - k) / (LAST + 1), 0, 1) * 0.6;
-        const bx = cx + Math.cos(k) * R, by = cy - Math.sin(k) * R;
-        DR.glowDot(g, bx, by, 2.2, AM.dye.weld, recent);
-        DR.text(g, String(k), cx + Math.cos(k) * (R + 15), cy - Math.sin(k) * (R + 15) + 3.5, { size: 9.5, role: 'mono', color: AM.col.linenDim, align: 'center', alpha: recent });
-      }
-      // the angle turned so far (beyond whole turns)
-      const t = ((th % TAU) + TAU) % TAU;
-      if (t > 0.02) {
-        g.save(); g.strokeStyle = AM.rgba(AM.dye.weld, 0.6); g.lineWidth = 1.2;
-        g.beginPath(); g.arc(cx, cy, R * 0.22, 0, -t, true); g.stroke(); g.restore();
-      }
-      // projections: cos across, sin up
-      const tipX = cx + Math.cos(th) * R * 0.9, tipY = cy - Math.sin(th) * R * 0.9;
-      g.save();
-      g.setLineDash([2, 3]); g.lineWidth = 1;
-      g.strokeStyle = AM.rgba(COS, 0.7); g.beginPath(); g.moveTo(tipX, tipY); g.lineTo(tipX, cy); g.stroke();
-      g.strokeStyle = AM.rgba(SIN, 0.7); g.beginPath(); g.moveTo(tipX, tipY); g.lineTo(cx, tipY); g.stroke();
-      g.setLineDash([]); g.lineCap = 'round'; g.lineWidth = 3.5;
-      g.strokeStyle = AM.rgba(COS, 0.9); g.beginPath(); g.moveTo(cx, cy); g.lineTo(tipX, cy); g.stroke();
-      g.strokeStyle = AM.rgba(SIN, 0.9); g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx, tipY); g.stroke();
-      g.restore();
-      hand(g, cx, cy, R * 0.9, th, AM.dye.weld, { width: 2.2, bead: 3 });
-      DR.glowDot(g, cx, cy, 2.4, AM.col.linen);
-      DR.text(g, 'cos', tipX + (Math.cos(th) >= 0 ? 6 : -6), cy + 14, { size: 10, role: 'mono', color: COS, align: Math.cos(th) >= 0 ? 'left' : 'right' });
-      DR.text(g, 'sin', cx + (Math.cos(th) >= 0 ? -7 : 7), tipY + 4, { size: 10, role: 'mono', color: SIN, align: Math.cos(th) >= 0 ? 'right' : 'left' });
-
-      // the two numbers the hand stands for
-      const tx = narrow ? 8 : cx + R + 38, ty = narrow ? cy + R + 46 : cy - 40;
-      const s = Math.sin(pNow), c = Math.cos(pNow);
-      DR.text(g, `POSITION ${pNow}`, tx, ty, { size: 9.5, role: 'mono', color: AM.col.mist, letterSpacing: '0.12em' });
-      DR.text(g, `PE(${pNow}, 0) = sin(${pNow})`, tx, ty + 24, { size: 11, role: 'mono', color: SIN });
-      DR.text(g, `= ${fmt(s, 3)}`, tx + (narrow ? 178 : 0), ty + (narrow ? 24 : 42), { size: narrow ? 11 : 15, role: 'mono', color: AM.col.linen, weight: 500 });
-      DR.text(g, `PE(${pNow}, 1) = cos(${pNow})`, tx, ty + (narrow ? 44 : 70), { size: 11, role: 'mono', color: COS });
-      DR.text(g, `= ${fmt(c, 3)}`, tx + (narrow ? 178 : 0), ty + (narrow ? 44 : 88), { size: narrow ? 11 : 15, role: 'mono', color: AM.col.linen, weight: 500 });
-      if (!narrow) DR.text(g, 'one step = one radian further', tx, ty + 116, { size: 9.5, role: 'mono', color: AM.col.mist });
-    }
-
-    cv.onResize(draw);
-    ctx.loop((t, dt) => {
-      if (st.k < 1) {
-        st.k = Math.min(1, st.k + dt / st.dur);
-        st.anim = lerp(st.from, st.pos, st.fn(st.k));
-        draw();
-      } else if (st.playing) {
-        st.hold += dt;
-        if (st.hold > 1.1) {
-          st.hold = 0; st.from = st.anim; st.k = 0;
-          if (st.pos >= LAST) { st.pos = 0; st.dur = 1.6; st.fn = EASE.inOut; }
-          else { st.pos += 1; st.dur = 0.45; st.fn = EASE.outBack; }
-        }
-      }
-    });
-    return AM.ui.figure({
-      title: 'How to read one dial', badge: AM.ui.badge('toy', 'Exact formula'), cls: 'pos-anat-fig',
-      caption: 'Hand 0 (ω<sub>0</sub> = 1). The hand’s tip sits at (cos, sin) of the angle it has turned, pos × ω. Beads mark the earlier positions: every step turns the hand by the same angle, wherever it starts.',
-    }, cv.wrap);
   }
 
   // ======================================================================
@@ -795,6 +721,8 @@
       onChange: (v) => { st.d = v; st.hover = null; T = buildTables(v); renderCaches(); updateReadout(true); st.dirty = true; draw(); },
     });
     seg.el.classList.add('pos-lc');
+    { const lab = seg.el.querySelector('.ctl-label'); if (lab) lab.innerHTML = 'd<sub>model</sub>'; }
+    { const grp = seg.el.querySelector('.seg'); if (grp) grp.setAttribute('aria-label', 'd_model, the width of each position vector'); }
     const BITS = 6;
     const bitEls = Array.from({ length: BITS }, () => el('i', { 'aria-hidden': 'true' }));
     const bitNum = el('span', { class: 'pos-bits-num' });
@@ -941,8 +869,8 @@
       }
       if (colW >= 14) {
         // name the two threads of the first hand where they fork
-        DR.text(g, 'sin', G.hx + colW * 0.5 - 5, G.barTop - 6, { size: 8, role: 'mono', color: AM.col.mist, align: 'right' });
-        DR.text(g, 'cos', G.hx + colW * 1.5 + 5, G.barTop - 6, { size: 8, role: 'mono', color: AM.col.mist, align: 'left' });
+        DR.text(g, 'sin', G.hx + colW * 0.5 - 5, G.barTop - 6, { size: 8.5, role: 'mono', color: AM.col.mist, align: 'right' });
+        DR.text(g, 'cos', G.hx + colW * 1.5 + 5, G.barTop - 6, { size: 8.5, role: 'mono', color: AM.col.mist, align: 'left' });
       }
 
       // ---- encoding table
@@ -1109,7 +1037,10 @@
     }
 
     cv.onResize((w) => { st.G = geomClock(w); renderCaches(); draw(); });
+    const seen = inView(cv.wrap);
     ctx.loop((t, dt) => {
+      // off-screen: the clockwork stops (no ticks, no redraws) and picks up where it left off
+      if (!seen.on) { st.dirty = true; return; }
       st.clock += dt;
       if (st.k < 1) {
         st.k = Math.min(1, st.k + dt / st.dur);
@@ -1148,301 +1079,16 @@
   }
 
   // ======================================================================
-  // 6. Figure C: the RoPE lab
-  // ======================================================================
-
-  function mountRope(ctx) {
-    const { el } = ctx;
-    const D = 8, NP = D / 2, MAXP = 30;
-    const theta = (i) => Math.pow(BASE, (-2 * i) / D); // RoPE speeds: the same clock speeds as the sinusoids
-    // toy query and key contents (before any rotation)
-    const Q = [0.92, 0.42, 0.68, -0.32, 0.4, 0.62, -0.5, 0.3];
-    const K = [0.78, -0.34, 0.48, 0.6, -0.36, 0.5, 0.44, 0.36];
-
-    /** RoPE: rotate pair i of v by the angle pos·θ_i. */
-    const rope = (v, pos) => {
-      const out = new Array(D);
-      for (let i = 0; i < NP; i++) {
-        const ang = pos * theta(i), c = Math.cos(ang), s = Math.sin(ang);
-        out[2 * i] = v[2 * i] * c - v[2 * i + 1] * s;
-        out[2 * i + 1] = v[2 * i] * s + v[2 * i + 1] * c;
-      }
-      return out;
-    };
-    /** The attention logit before the 1/√d scale: RoPE(q, m) · RoPE(k, n). */
-    const score = (m, n) => dot(rope(Q, m), rope(K, n));
-    const pairScore = (m, n, i) => { const q = rope(Q, m), k = rope(K, n); return q[2 * i] * k[2 * i] + q[2 * i + 1] * k[2 * i + 1]; };
-    const pairNorm = (v, i) => Math.hypot(v[2 * i], v[2 * i + 1]);
-    const normMax = Math.max(...[0, 1, 2, 3].flatMap((i) => [pairNorm(Q, i), pairNorm(K, i)]));
-    // the score as a function of the offset alone: S(Δ) = RoPE(q, Δ)·RoPE(k, 0)
-    const curve = Array.from({ length: 2 * MAXP + 1 }, (_, i) => score(i - MAXP, 0));
-    const cMin = Math.min(...curve), cMax = Math.max(...curve);
-    const thLabel = (t) => String(+t.toPrecision(2)); // 1, 0.1, 0.01, 0.001
-
-    const st = { m: 7, n: 3, am: 7, an: 3, pair: 0, msg: '', dirty: true, flash: 0 };
-
-    function geom(w) {
-      const wide = w >= 440;
-      const G = { w, wide };
-      if (wide) {
-        G.R = Math.min(w * 0.24, 132);
-        G.cx = G.R + 18; G.cy = 40 + G.R; // room for the q / k labels beyond the rim
-        const x0 = G.cx + G.R + 26, aw = w - x0;
-        G.mr = Math.min(aw / 5.2, 30);
-        G.mx = [0, 1, 2, 3].map((i) => x0 + aw * (i % 2 ? 0.74 : 0.26));
-        G.my = [0, 1, 2, 3].map((i) => G.cy + (i < 2 ? -0.42 : 0.48) * G.R);
-        G.miniTitle = { x: x0 + aw / 2, y: G.cy - G.R + 2 };
-        G.cTop = G.cy + G.R + 58; G.cH = 118;
-      } else {
-        G.R = Math.min(w * 0.3, 112);
-        G.cx = w / 2; G.cy = 40 + G.R;
-        G.mr = Math.min(w / 11, 24);
-        const sp = Math.min(w / 4.2, 100);
-        G.mx = [0, 1, 2, 3].map((i) => w / 2 + (i - 1.5) * sp);
-        G.my = [0, 1, 2, 3].map(() => G.cy + G.R + 36 + G.mr);
-        G.miniTitle = { x: w / 2, y: G.cy + G.R + 24 };
-        G.cTop = G.my[0] + G.mr + 66; G.cH = 104;
-      }
-      G.cBot = G.cTop + G.cH;
-      G.cx0 = 40; G.cx1 = w - 10;
-      G.h = G.cBot + 24;
-      return G;
-    }
-
-    const cv = ctx.canvas(null, {
-      height: (w) => geom(w).h,
-      label: 'A dial with a gold query arrow and a blue key arrow, each rotated in proportion to its position, beside four smaller dials for the four pairs of dimensions, above a curve of the dot product against the offset between the two positions.',
-    });
-    const readout = el('p', { class: 'pos-readout pos-rope-readout' });
-
-    const mS = AM.ui.slider({ id: 'pos-rope-m', label: 'query position m', min: 0, max: MAXP, step: 1, value: st.m, format: String, onInput: (v) => set(v, st.n, 'm') });
-    const nS = AM.ui.slider({ id: 'pos-rope-n', label: 'key position n', min: 0, max: MAXP, step: 1, value: st.n, format: String, onInput: (v) => set(st.m, v, 'n') });
-    mS.el.classList.add('pos-lc'); nS.el.classList.add('pos-lc');
-    const back = AM.ui.button({ id: 'pos-rope-back', label: '← Both −1', onClick: () => set(st.m - 1, st.n - 1, 'both') });
-    const fwd = AM.ui.button({ id: 'pos-rope-fwd', label: 'Both +1 →', kind: 'primary', onClick: () => set(st.m + 1, st.n + 1, 'both') });
-    const pairSeg = AM.ui.segmented({
-      id: 'pos-rope-pair', label: 'Big dial shows pair', value: 0,
-      options: [0, 1, 2, 3].map((i) => ({ value: i, label: String(i) })),
-      onChange: (v) => { st.pair = v; st.dirty = true; },
-    });
-
-    function set(m, n, why) {
-      m = Math.round(m); n = Math.round(n);
-      if (why === 'both' && (m < 0 || n < 0 || m > MAXP || n > MAXP)) {
-        // one of them is at the edge: refuse rather than silently change the offset
-        st.msg = 'edge';
-        updateReadout(); return;
-      }
-      m = clamp(m, 0, MAXP); n = clamp(n, 0, MAXP);
-      const before = score(st.m, st.n), offBefore = st.m - st.n;
-      st.m = m; st.n = n;
-      mS.set(m); nS.set(n);
-      const after = score(m, n);
-      if (why === 'both') { st.msg = Math.abs(after - before) < 1e-9 ? 'kept' : 'moved'; st.flash = 1; }
-      else st.msg = m - n === offBefore ? 'sameoff' : 'changed';
-      st.dirty = true;
-      updateReadout();
-    }
-
-    function updateReadout() {
-      const s = score(st.m, st.n), off = st.m - st.n;
-      const parts = [0, 1, 2, 3].map((i) => fmt(pairScore(st.m, st.n, i), 3)).join(' + ').replace(/\+ −/g, '− ');
-      let line2;
-      if (st.msg === 'kept') line2 = `Both moved by one: the offset is still ${off} and the score is still <b>${fmt(s, 4)}</b>.`;
-      else if (st.msg === 'changed') line2 = `The offset changed to ${off}, so the score changed too.`;
-      else if (st.msg === 'sameoff') line2 = 'Same offset, same score.';
-      else if (st.msg === 'edge') line2 = 'One position is at the end of the range; move the other one first.';
-      else line2 = 'Press “Both +1” a few times and watch the score.';
-      readout.innerHTML = `q at m = ${st.m}, k at n = ${st.n} · offset m − n = <b>${off}</b><br>q·k = ${parts} = <b>${fmt(s, 4)}</b><br><span class="pos-dim">${line2}</span>`;
-    }
-
-    function draw() {
-      if (!cv.w) return;
-      const G = geom(cv.w), g = cv.g;
-      cv.clear();
-      const i = st.pair, th = theta(i);
-      const qa0 = Math.atan2(Q[2 * i + 1], Q[2 * i]), ka0 = Math.atan2(K[2 * i + 1], K[2 * i]);
-      const qa = qa0 + st.am * th, ka = ka0 + st.an * th;
-      const qL = (G.R * 0.9 * pairNorm(Q, i)) / normMax, kL = (G.R * 0.9 * pairNorm(K, i)) / normMax;
-
-      // ---- header
-      subText(g, 'PAIR ' + i + ' · θ', String(i), 0, 11, { size: 9, color: AM.col.mist });
-      DR.text(g, `= ${thLabel(th)} rad per position` + (G.wide ? ' · dashed: before rotation' : ''), DR.measure(g, 'PAIR ' + i + ' · θ', 9, 'mono') + 9, 11, { size: 9, role: 'mono', color: AM.col.mist });
-      if (!G.wide) DR.text(g, 'dashed: before rotation', 0, 25, { size: 9, role: 'mono', color: AM.col.mist });
-
-      // ---- big dial
-      dialFace(g, G.cx, G.cy, G.R, { ticks: 24, cross: true, rim: AM.rgba(AM.dye.weld, 0.4), rimWidth: 1.2 });
-      g.save(); g.strokeStyle = AM.rgba(AM.dye.weld, 0.07); g.lineWidth = 9;
-      g.beginPath(); g.arc(G.cx, G.cy, G.R + 5, 0, TAU); g.stroke(); g.restore();
-      // the wedge between the rotated query and key: its angle is all the score depends on
-      const diff = Math.atan2(Math.sin(qa - ka), Math.cos(qa - ka));
-      g.save();
-      g.fillStyle = AM.rgba(AM.dye.weld, 0.13);
-      g.beginPath(); g.moveTo(G.cx, G.cy); g.arc(G.cx, G.cy, G.R * 0.4, -ka, -(ka + diff), diff > 0); g.closePath(); g.fill();
-      g.strokeStyle = AM.rgba('#fff4d6', 0.6); g.lineWidth = 1;
-      g.beginPath(); g.arc(G.cx, G.cy, G.R * 0.4, -ka, -(ka + diff), diff > 0); g.stroke();
-      g.restore();
-      // rotation arcs: how far position has turned each vector (the part beyond whole turns)
-      const rotArc = (a0, turn, rr, col) => {
-        const t = turn % TAU;
-        if (t < 0.01) return;
-        g.save(); g.strokeStyle = AM.rgba(col, 0.55); g.lineWidth = 1.2; g.setLineDash([2, 3]);
-        g.beginPath(); g.arc(G.cx, G.cy, rr, -a0, -(a0 + t), true); g.stroke(); g.restore();
-      };
-      rotArc(qa0, st.am * th, G.R * 0.6, AM.dye.weld);
-      rotArc(ka0, st.an * th, G.R * 0.68, AM.dye.woad);
-      dialArrow(g, G.cx, G.cy, qL, qa0, AM.dye.weld, { alpha: 0.32, width: 1.2, dash: [3, 3], head: 7 });
-      dialArrow(g, G.cx, G.cy, kL, ka0, AM.dye.woad, { alpha: 0.32, width: 1.2, dash: [3, 3], head: 7 });
-      const kt = dialArrow(g, G.cx, G.cy, kL, ka, AM.dye.woad, { width: 2.4, head: 11 });
-      const qt = dialArrow(g, G.cx, G.cy, qL, qa, AM.dye.weld, { width: 2.4, head: 11 });
-      DR.glowDot(g, G.cx, G.cy, 2.6, AM.col.linen);
-      const lab = (pt, ang, txt, col) => {
-        DR.text(g, txt, pt.x + Math.cos(ang) * 17, pt.y - Math.sin(ang) * 17 + 4, { size: 12, role: 'mono', color: col, align: 'center', weight: 500 });
-      };
-      lab(qt, qa, 'q', AM.dye.weld);
-      lab(kt, ka, 'k', AM.dye.woad);
-
-      // ---- the four pairs, each turning at its own speed
-      DR.text(g, 'EACH PAIR ADDS ITS PART OF q·k', G.miniTitle.x, G.miniTitle.y, { size: 8.5, role: 'mono', color: AM.col.mist, align: 'center', letterSpacing: '0.08em' });
-      for (let p = 0; p < NP; p++) {
-        const cx = G.mx[p], cy = G.my[p], r = G.mr, tp = theta(p);
-        const sel = p === st.pair;
-        if (sel) { g.save(); g.fillStyle = AM.rgba(AM.dye.weld, 0.08); g.beginPath(); g.arc(cx, cy, r + 7, 0, TAU); g.fill(); g.restore(); }
-        dialFace(g, cx, cy, r, { ticks: 12, rim: sel ? AM.dye.weld : AM.col.ruleStrong, rimWidth: sel ? 1.5 : 1 });
-        const qa1 = Math.atan2(Q[2 * p + 1], Q[2 * p]) + st.am * tp, ka1 = Math.atan2(K[2 * p + 1], K[2 * p]) + st.an * tp;
-        hand(g, cx, cy, (r * 0.86 * pairNorm(K, p)) / normMax, ka1, AM.dye.woad, { width: 1.7, bead: 1.6 });
-        hand(g, cx, cy, (r * 0.86 * pairNorm(Q, p)) / normMax, qa1, AM.dye.weld, { width: 1.7, bead: 1.6 });
-        const ps = pairScore(st.m, st.n, p);
-        subText(g, 'θ', String(p), cx - 4, cy + r + 14, { size: 9, color: sel ? AM.dye.weld : AM.col.mist, align: 'right' });
-        DR.text(g, '=' + thLabel(tp), cx - 3, cy + r + 14, { size: 9, role: 'mono', color: sel ? AM.dye.weld : AM.col.mist });
-        DR.text(g, (ps >= 0 ? '+' : '') + fmt(ps, 3), cx, cy + r + 28, { size: 10.5, role: 'mono', color: AM.col.linen, align: 'center' });
-      }
-
-      // ---- score vs offset: a function of m − n only
-      const xOf = (dd) => G.cx0 + ((dd + MAXP) / (2 * MAXP)) * (G.cx1 - G.cx0);
-      const pad = (cMax - cMin) * 0.12;
-      const yOf = (v) => G.cBot - ((v - (cMin - pad)) / (cMax - cMin + 2 * pad)) * (G.cBot - G.cTop);
-      DR.text(g, 'SCORE FOR EVERY OFFSET', G.cx0, G.cTop - 14, { size: 8.5, role: 'mono', color: AM.col.mist, letterSpacing: '0.1em' });
-      g.save();
-      g.strokeStyle = AM.rgba(AM.col.linen, 0.1); g.lineWidth = 1;
-      g.beginPath(); g.moveTo(G.cx0, Math.round(yOf(0)) + 0.5); g.lineTo(G.cx1, Math.round(yOf(0)) + 0.5); g.stroke();
-      g.beginPath(); g.moveTo(Math.round(xOf(0)) + 0.5, G.cTop); g.lineTo(Math.round(xOf(0)) + 0.5, G.cBot); g.stroke();
-      const fill = g.createLinearGradient(0, G.cTop, 0, G.cBot);
-      fill.addColorStop(0, AM.rgba(AM.dye.lichen, 0.22)); fill.addColorStop(1, AM.rgba(AM.dye.lichen, 0));
-      g.beginPath(); g.moveTo(xOf(-MAXP), G.cBot);
-      curve.forEach((v, k) => g.lineTo(xOf(k - MAXP), yOf(v)));
-      g.lineTo(xOf(MAXP), G.cBot); g.closePath(); g.fillStyle = fill; g.fill();
-      g.lineJoin = 'round';
-      g.beginPath(); curve.forEach((v, k) => (k ? g.lineTo(xOf(k - MAXP), yOf(v)) : g.moveTo(xOf(k - MAXP), yOf(v))));
-      g.strokeStyle = AM.rgba(AM.dye.lichen, 0.25); g.lineWidth = 5; g.stroke();
-      g.strokeStyle = AM.dye.lichen; g.lineWidth = 1.5; g.stroke();
-      g.fillStyle = AM.rgba(AM.dye.lichen, 0.85);
-      curve.forEach((v, k) => { g.beginPath(); g.arc(xOf(k - MAXP), yOf(v), 1.7, 0, TAU); g.fill(); });
-      g.restore();
-      DR.text(g, 'q·k', G.cx0 - 7, G.cTop + 4, { size: 9.5, role: 'mono', color: AM.col.mist, align: 'right' });
-      DR.text(g, '0', G.cx0 - 7, yOf(0) + 3, { size: 9, role: 'mono', color: AM.col.mist, align: 'right' });
-      DR.text(g, `−${MAXP}`, G.cx0, G.cBot + 15, { size: 9, role: 'mono', color: AM.col.mist });
-      DR.text(g, `+${MAXP}`, G.cx1, G.cBot + 15, { size: 9, role: 'mono', color: AM.col.mist, align: 'right' });
-      DR.text(g, 'offset m − n', xOf(0), G.cBot + 15, { size: 9, role: 'mono', color: AM.col.linenDim, align: 'center' });
-      // the current (m, n): computed from both positions, it lands on the offset-only curve
-      const ao = st.am - st.an, sNow = score(st.am, st.an);
-      const mx = xOf(ao), my = yOf(sNow);
-      g.save(); g.strokeStyle = AM.rgba(AM.dye.weld, 0.45); g.setLineDash([2, 3]);
-      g.beginPath(); g.moveTo(mx, G.cTop); g.lineTo(mx, G.cBot); g.stroke(); g.restore();
-      if (st.flash > 0.01) {
-        g.save(); g.strokeStyle = AM.rgba(AM.dye.weld, 0.8 * st.flash); g.lineWidth = 1.5;
-        g.beginPath(); g.arc(mx, my, 6 + 18 * (1 - st.flash), 0, TAU); g.stroke(); g.restore();
-      }
-      DR.glowDot(g, mx, my, 3.4, AM.dye.weld);
-    }
-
-    // a tap on a small dial shows that pair in the big dial
-    cv.canvas.addEventListener('pointerdown', (e) => {
-      const p = cv.pointer(e), G = geom(cv.w);
-      G.mx.forEach((x, k) => { if (Math.hypot(p.x - x, p.y - G.my[k]) < G.mr + 8) { st.pair = k; pairSeg.set(k); st.dirty = true; } });
-    });
-
-    const controls = el('div', { class: 'controls pos-ctrls pos-rope-ctrls' }, mS.el, nS.el, el('div', { class: 'pos-btns' }, back, fwd), pairSeg.el);
-    const fig = AM.ui.figure({
-      title: 'Rotary embeddings, one dial per pair', badge: AM.ui.badge('toy', 'Exact formula'), cls: 'pos-rope-fig',
-      caption: 'Toy query and key (d = 8, four pairs); the rotation is the exact RoPE formula with θ<sub>i</sub> = 10000<sup>−2i/8</sup>. The score is the raw dot product q·k, before the 1/√d scale and softmax. The purple curve is computed from the offset alone, as RoPE(q, Δ)·RoPE(k, 0); the gold bead is computed from both positions and always lands on it.',
-    }, cv.wrap, controls, readout);
-
-    cv.onResize(() => { st.dirty = true; draw(); });
-    ctx.loop((t, dt) => {
-      const tm = approach(st.am, st.m, dt * 7), tn = approach(st.an, st.n, dt * 7);
-      const moving = Math.abs(tm - st.m) > 1e-3 || Math.abs(tn - st.n) > 1e-3;
-      st.am = moving ? tm : st.m; st.an = moving ? tn : st.n;
-      if (st.flash > 0) st.flash = Math.max(0, st.flash - dt * 1.4);
-      if (moving || st.dirty || st.flash > 0) { draw(); st.dirty = false; }
-    });
-    updateReadout();
-    return { el: fig };
-  }
-
-  // ======================================================================
-  // 7. Figure D: ALiBi, a distance penalty with one slope per head
-  // ======================================================================
-
-  function mountAlibi(ctx) {
-    const T = 16, q = T - 1; // a query at position 15 looking back over keys 0…15 (causal)
-    // ALiBi with 8 heads gives head h the slope 2^(−h); we show heads 1, 3 and 5
-    const heads = [{ h: 1, s: 1 / 2, label: '1/2' }, { h: 3, s: 1 / 8, label: '1/8' }, { h: 5, s: 1 / 32, label: '1/32' }];
-    // equal content scores (all 0), so the weights are softmax(−s · distance) alone
-    const W = heads.map((hd) => AM.math.softmax(Array.from({ length: T }, (_, j) => -hd.s * (q - j))));
-    const cv = ctx.canvas(null, {
-      height: (w) => (w < 420 ? 176 : 188),
-      label: 'Three rows of attention weights for a query at position 15 over keys 0 to 15, one row per ALiBi slope. The steepest slope puts almost all weight on the nearest keys; the shallowest spreads it widely.',
-    });
-
-    function draw() {
-      if (!cv.w) return;
-      const g = cv.g, w = cv.w, h = cv.h;
-      cv.clear();
-      const small = w < 420;
-      const lx = small ? 58 : 70, x0 = lx + 10, x1 = w - (small ? 40 : 50);
-      const top = 10, rowH = (h - top - 30) / heads.length, cw = (x1 - x0) / T;
-      heads.forEach((hd, r) => {
-        const col = AM.headColor(r), base = top + (r + 1) * rowH - 6, hMax = rowH - 14;
-        DR.text(g, 'slope', lx, base - hMax / 2 - 2, { size: 9, role: 'mono', color: AM.col.mist, align: 'right' });
-        DR.text(g, hd.label, lx, base - hMax / 2 + 11, { size: 10.5, role: 'mono', color: col, align: 'right', weight: 500 });
-        g.save(); g.strokeStyle = AM.rgba(AM.col.linen, 0.08); g.lineWidth = 1;
-        g.beginPath(); g.moveTo(x0, base + 0.5); g.lineTo(x1, base + 0.5); g.stroke(); g.restore();
-        for (let j = 0; j < T; j++) {
-          const v = W[r][j] / W[r][q], x = x0 + (j + 0.5) * cw, y = base - v * hMax; // each row scaled to its largest weight
-          g.save();
-          g.strokeStyle = AM.rgba(col, 0.2); g.lineWidth = 4;
-          g.beginPath(); g.moveTo(x, base); g.lineTo(x, y); g.stroke();
-          g.strokeStyle = AM.rgba(col, 0.85); g.lineWidth = 1.4;
-          g.beginPath(); g.moveTo(x, base); g.lineTo(x, y); g.stroke();
-          g.restore();
-          DR.glowDot(g, x, y, 1.6 + 1.4 * v, col, 0.5 + 0.5 * v);
-        }
-        DR.text(g, fmt(W[r][q], 2), x1 + 8, base - 2, { size: 10, role: 'mono', color: AM.col.linen });
-      });
-      const ay = h - 9;
-      DR.text(g, 'key 0', x0, ay, { size: 9, role: 'mono', color: AM.col.mist });
-      DR.text(g, 'key 15 = the query', x1, ay, { size: 9, role: 'mono', color: AM.col.mist, align: 'right' });
-      if (!small) DR.text(g, '← farther', (x0 + x1) / 2, ay, { size: 9, role: 'mono', color: AM.col.linenDim, align: 'center' });
-      DR.text(g, 'on 15', x1 + 8, top + 2, { size: 8.5, role: 'mono', color: AM.col.mist });
-    }
-    cv.onResize(draw);
-    return AM.ui.figure({
-      title: 'ALiBi · one penalty, three slopes', badge: AM.ui.badge('toy', 'Exact formula'), cls: 'pos-alibi-fig',
-      caption: 'A query at position 15 looks back over keys 0–15. Every key gets the same content score here, so the weights are softmax(−s · distance) alone. Each row is scaled to its largest weight; the number on the right is that weight, on the query’s own position. A steep slope keeps attention local; a shallow one spreads it out. With 8 heads, ALiBi gives head h the slope 2<sup>−h</sup>; these are heads 1, 3 and 5.',
-    }, cv.wrap);
-  }
-
-  // ======================================================================
-  // 7b. Figure E (live model): the tiny transformer's learned position table
+  // 6. Figure C (live model): the tiny transformer's learned position table
   // ======================================================================
 
   /**
    * The real tiny model ('tinyworld') learns one position vector per seat.
-   * We read them with its public forward pass: feed one word n_ctx times, so
-   * the first residual vector at seat t is wte[word] + wpe[t]; subtracting the
-   * average over seats leaves wpe[t] minus the table's mean. Cosine similarity
-   * of those rows is set beside the sinusoids for the same seats and width.
+   * We read them with its forward pass: feed one word n_ctx times, so the
+   * first residual vector at seat t is wte[word] + wpe[t]; subtracting the
+   * word's own embedding row leaves exactly wpe[t]. Cosine similarity of those
+   * rows is set beside the sinusoids for the same seats and width, both raw
+   * (neither side is mean-centred), so the comparison is like for like.
    * Returns null (and the page simply omits the figure) when no model ships.
    */
   function mountLearned(ctx) {
@@ -1459,7 +1105,7 @@
     const readout = el('p', { class: 'pos-readout' }, 'Reading the tiny model’s position table…');
     const fig = AM.ui.figure({
       title: 'What the tiny model learned', badge: 'live', cls: 'pos-live-fig',
-      caption: 'Live model: the tiny transformer on this page feeds one word through every seat, and its first residual vectors, minus their average, give its learned position vectors. Left: cosine similarity between every pair of them. Right: sinusoids for the same seats and width. One colour scale for both, from −1 (ink) to 1 (cream). Its table started as faint sinusoids and was reshaped by training. Hover or tap a cell to compare.',
+      caption: 'Live model: the tiny transformer on this page feeds one word through every seat, and its first residual vectors, minus the word’s own embedding, give its learned position vectors. Left: cosine similarity between every pair of them. Right: sinusoids for the same seats and width. One colour scale for both, from −1 (ink) to 1 (cream). Its table started as faint sinusoids and was reshaped by training. Hover or tap a cell to compare.',
     }, cv.wrap, readout);
 
     const geom = (w) => {
@@ -1474,9 +1120,10 @@
       let id = typeof m.tokenId === 'function' ? m.tokenId('the') : -1;
       if (id < 0) id = Math.min(2, m.vocab.length - 1);
       const R = m.run(new Array(N).fill(id), { capture: true }).resid[0];
-      const mu = new Float64Array(d);
-      R.forEach((x) => { for (let j = 0; j < d; j++) mu[j] += x[j] / N; });
-      const P = R.map((x) => Array.from(x, (v, j) => v - mu[j]));
+      // resid[0][t] = wte[id] + wpe[t]: take away the word's own embedding row and wpe[t] is left
+      const wte = m._net && m._net.params && m._net.params.wte && m._net.params.wte.data;
+      if (!wte || wte.length < (id + 1) * d) throw new Error('no embedding table');
+      const P = R.map((x) => Array.from(x, (v, j) => v - wte[id * d + j]));
       const cos = (a, b) => dot(a, b) / (Math.sqrt(dot(a, a) * dot(b, b)) || 1);
       st.L = P.map((a) => P.map((b) => cos(a, b)));
       const PE = Array.from({ length: N }, (_, p) => sinusoid(p, d));
@@ -1526,7 +1173,7 @@
       }
       const N = st.N, c = G.s / N;
       map(g, G.x0, G.y0, G.s, st.L, G.s > 170 ? 'LEARNED · TINY MODEL' : 'LEARNED');
-      map(g, G.x1, G.y0, G.s, st.S, G.s > 170 ? `SINUSOIDS · d = ${st.d}` : 'SINUSOIDS');
+      map(g, G.x1, G.y0, G.s, st.S, G.s > 170 ? `SINUSOIDS · ${st.d} DIMS` : 'SINUSOIDS');
       if (st.hover) {
         const { i, j } = st.hover;
         for (const x of [G.x0, G.x1]) {
@@ -1573,7 +1220,7 @@
   }
 
   // ======================================================================
-  // 8. Chapter-scoped styles
+  // 7. Chapter-scoped styles
   // ======================================================================
 
   const CSS = `
@@ -1583,7 +1230,6 @@
     #ch-position .pos-readout .pos-dim { color: var(--mist); }
     #ch-position .pos-clock-readout { min-height: 3.6em; }
     #ch-position .pos-ctrls { gap: var(--space-4) var(--space-6); align-items: end; }
-    #ch-position .pos-btns { display: flex; gap: var(--space-2); flex-wrap: wrap; }
     #ch-position .pos-bits { display: grid; gap: 6px; }
     #ch-position .pos-bits-row { display: inline-flex; gap: 5px; align-items: center; height: 22px; }
     #ch-position .pos-bits i { display: inline-block; width: 11px; height: 11px; border-radius: 50%; border: 1px solid var(--rule-strong); background: var(--ink); }
@@ -1595,18 +1241,14 @@
     #ch-position .pos-bits-num { grid-area: n; }
     #ch-position .pos-clock-sec { display: grid; gap: var(--space-6); }
     #ch-position .pos-notes { align-items: start; }
-    #ch-position .pos-notes .prose, #ch-position .pos-intro .prose, #ch-position .pos-learned .prose { max-width: none; }
+    #ch-position .pos-notes .prose, #ch-position .pos-learned .prose { max-width: none; }
     #ch-position .pos-learned { align-items: start; }
-    #ch-position .pos-intro { align-items: center; }
     #ch-position .math.block { font-size: 0.82em; }
     #ch-position .step .math.block { margin-block: 2px; }
     #ch-position .pos-formula { display: grid; gap: 4px; }
-    #ch-position .pos-rope { align-items: start; }
-    #ch-position .pos-rope .prose { padding-top: var(--space-2); }
     #ch-position .prose > *, #ch-position .step > * { min-width: 0; }
     #ch-position .pos-lc .ctl-label { text-transform: none; letter-spacing: 0.06em; }
-    #ch-position .pos-rope-ctrls { gap: var(--space-4) var(--space-5); }
-    #ch-position .pos-rope-ctrls .ctl-range { width: min(220px, 100%); }
+    #ch-position .ctl-label sub { font-size: 0.8em; line-height: 0; }
     @media (max-width: 900px) {
       #ch-position .pos-bag-fig figcaption { display: none; }
       #ch-position .pos-bag-fig .pos-readout { font-size: 10.5px; line-height: 1.55; min-height: 4.7em; }
@@ -1620,7 +1262,7 @@
   `;
 
   // ======================================================================
-  // 9. The chapter
+  // 8. The chapter
   // ======================================================================
 
   AM.chapter({
@@ -1644,18 +1286,18 @@
       const steps = [
         step('01 · The problem', 'Same words, opposite news',
           P('“Dog bites man” is not news. “Man bites dog” is. The words are identical; only the order differs, and the order carries the meaning.'),
-          P('Self-attention compares tokens through dot products of their vectors, and nothing in that arithmetic records who came first. Hand it three word vectors and it receives a set, a <span class="term">bag of words</span>. Watch the threads cross as the order flips. The bag does not change.')),
+          P('<span class="term">Self-attention</span>, the step where tokens read from one another (chapter 4 builds it piece by piece), compares tokens through dot products of their vectors. Nothing in that arithmetic records who came first. Hand it three word vectors and it receives a set, a <span class="term">bag of words</span>. Watch the threads cross as the order flips. The bag does not change.')),
         step('02 · Equivariance', 'Shuffle in, shuffle out',
-          P('Each output is a weighted mix of the value vectors, with weights from <span class="math">softmax(q·k / √d)</span>. Reorder the inputs and every weight travels with its token, so the outputs are the same vectors in the new order.'),
-          P('This property is called <span class="term">permutation equivariance</span>: <span class="math">Attn(PX) = P · Attn(X)</span> for any reordering <span class="math">P</span>. Below the bag, each output sits exactly inside the outline of the same word’s output from the other sentence.'),
-          P('GPT-style models also use a causal mask, so each token sees only itself and the tokens before it. That leaks a little order information, and models trained with no positions at all learn to exploit it. In practice, models are almost always given positions explicitly.')),
+          P('Each word’s output is a blend of what every word offers, weighted by how well each pair of vectors matches. Reorder the words and every pair still matches just as well, so every output simply moves with its word.'),
+          P('This property is called <span class="term">permutation equivariance</span>: shuffle the inputs and the outputs come out shuffled the same way. Below the bag, each output sits exactly inside the outline of the same word’s output from the other sentence.'),
+          P('GPT-style models also stop each token from seeing the words after it. That leaks a little order information, and models trained with no positions at all learn to exploit it. In practice, models are almost always given positions explicitly.')),
         step('03 · The fix', 'Stamp every seat',
           P('Give each position <span class="math">t</span> its own vector <span class="math">p<sub>t</sub></span>, the same length as the embeddings, and add it:'),
           el('span', { class: 'math block' }, 'x', el('sub', {}, 't'), ' = e(token', el('sub', {}, 't'), ') + p', el('sub', {}, 't')),
           P(`Now “dog” in seat 0 and “dog” in seat 2 are different vectors. The beads in the bag move with every reorder, the attention weights change, and the outputs part ways: dog’s output now differs by up to <strong>${r1.diff[0].toFixed(2)}</strong> between the sentences.`),
           P('The little clocks over the seats are the position vectors. Each hand is one sin/cos pair; we open the clock up just below.')),
         step('04 · Why add?', 'Two messages in one vector',
-          P('Why add the position instead of appending it as extra numbers? Adding keeps every vector at <span class="math">d_model</span> numbers and costs nothing.'),
+          P('Why add the position instead of appending it as extra numbers? Adding keeps every vector at <span class="math">d<sub>model</sub></span> numbers and costs nothing.'),
           P('It works because the space is roomy. With hundreds of dimensions, token information and position information can sit in nearly separate directions, and the layers learn to read each one.'),
           P('In the bag, each dashed ring is the bare embedding and the gold arrow is the position vector added to it. The shadow is a linear projection, so it keeps the sum honest: the arrow for a seat is the same whichever word sits there.')),
       ];
@@ -1665,16 +1307,16 @@
 
       // ---- the clockwork
       const lastPeriod = thousands(Math.round(TAU / omega(15, 32) / 1000) * 1000);
-      const clockIntro = el('div', { class: 'prose' },
+      const clockIntro = el('div', { class: 'prose pos-intro' },
         el('h3', {}, 'A clock for every position'),
         P('So what should the position vectors be? The original Transformer (Vaswani et al., 2017) used a fixed recipe of sines and cosines, with nothing to learn:'),
         el('div', { class: 'math block pos-formula', html:
-          '<span>PE(pos, 2i) = sin(pos · ω<sub>i</sub>)</span><span>PE(pos, 2i+1) = cos(pos · ω<sub>i</sub>)</span><span>ω<sub>i</sub> = 1 / 10000<sup>2i/d</sup></span>' }),
-        P('Read each sin/cos pair as the tip of a clock hand: cos is how far it points right, sin how far up. One step forward turns hand <span class="math">i</span> by <span class="math">ω<sub>i</sub></span> radians. Hand 0 turns one radian per step and goes round every 6.3 positions. Each hand after it is slower by the same factor, down to the last, which needs about ' + lastPeriod + ' positions for one turn when <span class="math">d = 32</span>.'),
+          '<span>PE(pos, 2i) = sin(pos · ω<sub>i</sub>)</span><span>PE(pos, 2i+1) = cos(pos · ω<sub>i</sub>)</span><span>ω<sub>i</sub> = 1 / 10000<sup>2i/d<sub>model</sub></sup></span>' }),
+        P('Read each sin/cos pair as the tip of a clock hand: cos is how far it points right, sin how far up. One step forward turns hand <span class="math">i</span> by <span class="math">ω<sub>i</sub></span> radians, wherever it starts. Hand 0 turns one radian per step and goes round every 6.3 positions. Each hand after it is slower by the same factor, down to the last, which needs about ' + lastPeriod + ' positions for one turn when <span class="math">d<sub>model</sub> = 32</span>.'),
         P('Fast hands tell neighbours apart; slow hands tell distant positions apart. A clock does the same with its second, minute and hour hands, and a binary counter with its bits: the lowest flips every step, each higher bit half as often.'));
       const clock = mountClockwork(ctx);
       const learned = mountLearned(ctx); // null when the page ships without the live model
-      const learnedP = P('The alternative is to learn the position vectors like word embeddings, one trainable row per position. GPT-2 learns 1,024 of them, and the tiny live model on this page learns its own too. The 2017 paper found the two approaches worked about equally well, though a learned table has nothing to offer past the longest position seen in training.');
+      const learnedP = P('The alternative is to learn the position vectors like word embeddings, one trainable row per position. GPT-2 learns 1,024 of them, and the tiny live model on this page (chapter 5 introduces it properly) learns its own 32. The 2017 paper found the two approaches worked about equally well, though a learned table has nothing to offer past the longest position seen in training.');
       const notes = el('div', { class: 'grid-2 pos-notes' },
         el('div', { class: 'prose' },
           el('h3', {}, 'Nearby positions look alike'),
@@ -1686,6 +1328,8 @@
         el('div', { class: 'prose' },
           el('h3', {}, 'A shift is a rotation'),
           P('Moving <span class="math">k</span> places forward turns every hand by <span class="math">k · ω<sub>i</sub></span>, wherever it started. So <span class="math">PE(pos + k)</span> is a fixed rotation of <span class="math">PE(pos)</span>, the same linear map for every <span class="math">pos</span>. The authors chose sinusoids hoping this would make relative positions easy to learn.'),
+          // today's most common scheme turns the same clocks inside attention: one pointer ahead, no detour here
+          P('Most open models today, including Llama, Mistral and Qwen, build on this rotation with <span class="term">rotary position embeddings</span> (RoPE). Nothing is added to the token vectors. The hands turn inside attention instead, and the end of chapter 4 shows how.'),
           learned ? null : learnedP));
       // with the live model on the page, learned positions get their own row: prose beside the live figure
       const learnedRow = learned ? el('div', { class: 'grid-2 pos-learned' },
@@ -1694,24 +1338,13 @@
           learnedP,
           P('The tiny model’s own table, read live in the figure, also keeps neighbours alike: the bright diagonal. Farther apart it is freer than the sinusoids, and some pairs end up pointing well apart, the dark patches. Nobody designed that pattern; it came out of training.')),
         learned) : null;
-      const introGrid = el('div', { class: 'grid-2 pos-intro' }, clockIntro, mountAnatomy(ctx));
-      const clockSec = el('div', { class: 'ch-wide pos-clock-sec' }, introGrid, clock.el, notes, learnedRow);
-
-      // ---- RoPE
-      const rope = mountRope(ctx);
-      const ropeProse = el('div', { class: 'prose' },
-        el('h3', {}, 'Rotate the query and key instead'),
-        P('Most open models today, including Llama, Mistral and Qwen, use <span class="term">rotary position embeddings</span> (RoPE; Su et al., 2021). Nothing is added to the token vectors. Inside every attention layer, each query and key is split into pairs, and pair <span class="math">i</span> is rotated by its position times <span class="math">θ<sub>i</sub> = 10000<sup>−2i/d</sup></span>, the same clock speeds as before (here <span class="math">d</span> is the size of one head).'),
-        P('A rotation keeps lengths. Turning the query by <span class="math">m·θ<sub>i</sub></span> and the key by <span class="math">n·θ<sub>i</sub></span> changes the angle between them by <span class="math">(m − n)·θ<sub>i</sub></span>, so the score <span class="math">q·k</span> depends on the two contents and on the offset <span class="math">m − n</span>, never on <span class="math">m</span> or <span class="math">n</span> alone. Slide both together and the score holds still.'),
-        P('<span class="term">ALiBi</span> (Press et al., 2021) is simpler still. It adds no vectors at all; it subtracts a penalty proportional to distance from every attention score, <span class="math">score − s·(m − n)</span>, with a different slope <span class="math">s</span> for each head, so far-away tokens are down-weighted, some heads steeply and some gently.'),
-        mountAlibi(ctx));
-      const ropeGrid = el('div', { class: 'grid-2 pos-rope' }, ropeProse, rope.el);
+      const clockSec = el('div', { class: 'ch-wide pos-clock-sec' }, clockIntro, clock.el, notes, learnedRow);
 
       const callout = el('div', { class: 'callout' },
         el('span', { class: 'callout-label' }, 'Key idea'),
-        P('Attention treats its input as a bag, so order has to be written into the vectors themselves. The original Transformer adds a bank of clock hands turning at geometrically spaced speeds. GPT-2 learns its position vectors. RoPE rotates queries and keys, so position reaches the attention scores only as the distance between two tokens.'));
+        P('Attention treats its input as a bag, so order has to be supplied. The original Transformer adds a bank of clock hands, turning at geometrically spaced speeds, to every token vector. GPT-2 adds a learned table instead. RoPE adds nothing to the vectors: it rotates queries and keys inside attention (chapter 4).'));
 
-      root.appendChild(el('div', { class: 'ch-body' }, split, clockSec, ropeGrid, callout));
+      root.appendChild(el('div', { class: 'ch-body' }, split, clockSec, callout));
     },
   });
 })();

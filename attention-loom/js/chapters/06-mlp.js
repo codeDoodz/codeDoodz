@@ -1,6 +1,6 @@
 /* Chapter 06 — The Memory Vaults: the feed-forward network (MLP).
 
-   Four figures, all driven by the real tiny transformer (tinyworld):
+   Three figures, all driven by the real tiny transformer (tinyworld):
    1. "The vault" (scrollytelling stage). The last layer's MLP at the word
       "says" in "the cat says": the 64-number stream fans out into a bloom of
       256 neuron beads (real pre-activations, then real GELU outputs), the
@@ -12,8 +12,6 @@
    3. Fact explorer: every memorised fact, the logit lens before and after each
       sublayer, all 3 × 256 neurons at the last word, click-to-silence and a
       mute for the attention head that fetches the country.
-   4. Memory or context: "the sky is" vs "the box is" under a lying context and
-      with the binding head muted.
 
    Every number on screen is computed at mount from the model's own weights.
    A small float64 forward pass (same maths as js/model/transformer.js) adds
@@ -28,6 +26,23 @@
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const clamp = MM.clamp;
   const isStacked = () => (window.matchMedia ? window.matchMedia('(max-width: 900px)').matches : window.innerWidth <= 900);
+  /** Side-by-side layout: the tallest canvas that keeps the whole sticky stage (title, controls,
+      caption) on screen below its 6vh top offset. host holds only the canvas. Never below 380px. */
+  const deskFit = (host) => {
+    const stage = host && host.closest('.ch-stage');
+    if (!stage) return Infinity;
+    const other = Math.max(0, stage.offsetHeight - host.offsetHeight);
+    return Math.max(380, window.innerHeight * 0.94 - other - 16);
+  };
+  /** The side-by-side stage canvas depends on the window's height, which a width observer misses. */
+  const fitOnTallnessChange = (cv) => {
+    let ih = window.innerHeight;
+    window.addEventListener('resize', () => {
+      if (window.innerHeight === ih) return;
+      ih = window.innerHeight;
+      if (!isStacked()) cv.resize();
+    }, { passive: true });
+  };
   const minus = (s) => String(s).replace(/^-/, '−');
   const fmtS = (v, d = 1) => (v < 0 ? '−' : '+') + Math.abs(v).toFixed(d);
   const fmtN = (v, d = 2) => minus(v.toFixed(d));
@@ -104,9 +119,6 @@
   };
   const sCurveV = (x0, y0, x3, y3) => { const my = (y0 + y3) / 2; return [x0, y0, x0, my, x3, my, x3, y3]; };
 
-  /** Colour for a colour word (only dye-palette hues). */
-  const COLOUR_DYE = () => ({ red: AM.dye.madder, blue: AM.dye.woad, green: AM.dye.verdigris, yellow: AM.dye.weld, white: AM.col.linen, pink: AM.dye.cochineal });
-
   // ------------------------------------------------------------------ the memorised facts (tools/data-tinyworld.mjs)
   const CAPITALS = { france: 'paris', japan: 'tokyo', italy: 'rome', spain: 'madrid', egypt: 'cairo', peru: 'lima', china: 'beijing', kenya: 'nairobi' };
   const SOUNDS = { cow: 'moo', dog: 'woof', cat: 'meow', duck: 'quack', sheep: 'baa', owl: 'hoot', pig: 'oink', lion: 'roar' };
@@ -117,12 +129,11 @@
     { key: 'snd', label: 'Sounds', items: Object.keys(SOUNDS).map((a) => ({ chip: a, text: `the ${a} says`, ans: SOUNDS[a] })) },
     { key: 'col', label: 'Colours', items: Object.keys(COLOUR_FACTS).map((x) => ({ chip: x, text: `the ${x} is`, ans: COLOUR_FACTS[x] })) },
   ];
-  const BIND_COLOURS = ['red', 'blue', 'green', 'yellow', 'white', 'pink'];
   const HERO_PROMPTS = [{ text: 'the cat says', ans: 'meow', label: 'the cat says' }, { text: 'the dog says', ans: 'woof', label: 'the dog says' }];
   const GELU_PROMPTS = [{ text: 'the cat says', ans: 'meow' }, { text: 'the sky is', ans: 'blue' }, { text: 'the capital of spain is', ans: 'madrid' }];
 
   /** Head name, preferring the interpretability notes (AM_NOTES) when they are loaded. */
-  const HEAD_NAMES = { L0H2: 'the fact finder', L1H3: 'the colour binder' }; // same fallbacks as chapter 05
+  const HEAD_NAMES = { L0H2: 'the fact finder' }; // same fallback as chapter 05
   function headName(l, h) {
     const key = `L${l}H${h}`;
     try {
@@ -321,10 +332,15 @@
     #ch-${ID} .mv-stage .seg button { text-transform: none; letter-spacing: 0.02em; font-size: 11px; }
     #ch-${ID} .mv-cap-phone, #ch-${ID} .mv-short { display: none; }
     @media (max-width: 900px) {
-      #ch-${ID} .mv-cap-desk, #ch-${ID} .mv-stage .fig-title, #ch-${ID} .mv-stage .ctl > .ctl-label { display: none; }
+      #ch-${ID} .mv-cap-desk, #ch-${ID} .mv-stage .ctl > .ctl-label { display: none; }
       #ch-${ID} .mv-cap-phone { display: block; }
-      #ch-${ID} .mv-stage .fig-top { min-height: 0; justify-content: flex-end; }
+      #ch-${ID} .mv-stage .fig-top { min-height: 0; }
       #ch-${ID} .mv-stage .controls { flex-wrap: nowrap; justify-content: space-between; }
+    }
+    /* short screens: the caption leaves the sticky stage so the picture and its controls fit */
+    @media (min-width: 901px) and (max-height: 860px) {
+      #ch-${ID} .mv-cap-desk { display: none; }
+      #ch-${ID} .mv-cap-phone { display: block; }
     }
     @media (max-width: 520px) {
       #ch-${ID} .mv-stage .mv-long { display: none; }
@@ -354,7 +370,7 @@
     #ch-${ID} .gl-tile.is-bad { border-color: color-mix(in srgb, var(--madder) 50%, var(--rule)); }
     #ch-${ID} .gl-tile.is-bad .gl-val { color: var(--madder); }
     #ch-${ID} .gl-panel { display: grid; gap: var(--space-3); }
-    #ch-${ID} .gl-panel .seg button, #ch-${ID} .fx-panel .seg button, #ch-${ID} .ct-panel .seg button { text-transform: none; letter-spacing: 0.02em; font-size: 11px; }
+    #ch-${ID} .gl-panel .seg button, #ch-${ID} .fx-panel .seg button { text-transform: none; letter-spacing: 0.02em; font-size: 11px; }
     @media (max-width: 900px) { #ch-${ID} .gl-grid { grid-template-columns: minmax(0, 1fr); } }
     @media (max-width: 420px) { #ch-${ID} .gl-read { grid-template-columns: 1fr 1fr; } #ch-${ID} .gl-tile.is-pred { grid-column: 1 / -1; } }
 
@@ -379,18 +395,6 @@
     @media (max-width: 440px) { #ch-${ID} .fx-panel .seg button { padding: 5px 8px; letter-spacing: 0; } }
 
     /* memory vs context */
-    #ch-${ID} .ct-panel { display: grid; gap: var(--space-4); }
-    #ch-${ID} .ct-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-5); }
-    #ch-${ID} .ct-ctl .ct-lab { font-family: var(--font-mono); font-size: var(--fs-micro); letter-spacing: 0.1em; text-transform: uppercase; color: var(--mist); }
-    #ch-${ID} .ct-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: var(--space-4); }
-    #ch-${ID} .ct-card { display: grid; gap: var(--space-2); padding: var(--space-3) var(--space-4) var(--space-4); border-radius: var(--radius); border: 1px solid var(--rule); background: var(--ink); min-width: 0; }
-    #ch-${ID} .ct-card h4 { font-family: var(--font-mono); font-size: var(--fs-micro); font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--weld); }
-    #ch-${ID} .ct-ans { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
-    #ch-${ID} .ct-ans .ct-w { font-family: var(--font-display); font-style: italic; font-size: 1.75rem; line-height: 1.05; transition: color 0.3s; }
-    #ch-${ID} .ct-ans .ct-p { font-family: var(--font-mono); font-size: 12px; color: var(--mist); }
-    #ch-${ID} .ct-note { font-size: var(--fs-small); color: var(--mist); line-height: 1.5; }
-    #ch-${ID} .ct-note b { color: var(--linen-dim); font-weight: 600; }
-    #ch-${ID} .ct-swatches .tok { text-transform: none; }
   `);
 
   // ==================================================================== FIGURE 1 — the vault
@@ -433,9 +437,10 @@
       label: 'The last MLP of the live model at the word "says".',
       height: (w) => (isStacked()
         ? Math.round(Math.min(w * 1.04, Math.max(318, window.innerHeight * 0.44)))
-        : Math.round(Math.min(w * 1.0, Math.max(500, window.innerHeight * 0.72)))),
+        : Math.round(Math.min(w * 1.0, Math.max(500, window.innerHeight * 0.72), deskFit(host)))),
     });
     const vis = visibility(cv.wrap);
+    fitOnTallnessChange(cv);
 
     function describe() {
       const t = H;
@@ -1420,107 +1425,6 @@
     refresh();
   }
 
-  // ==================================================================== FIGURE 4 — memory or context
-  function buildContrast(ctx, hosts, S) {
-    const { E, m } = S;
-    const HC = AM.headColor(3);
-    const st = { colour: 2, mute: false };
-    const sentences = (c) => ({
-      mem: `the red ball and the ${c} sky . the sky is`,
-      ctxs: `the red ball and the ${c} box . the box is`,
-    });
-    const cache = new Map();
-    function dataFor(text, mute) {
-      const key = text + (mute ? '|m' : '');
-      if (cache.has(key)) return cache.get(key);
-      const ids = m.encode(text).ids;
-      const r = E.run(ids, { mute: mute ? [[1, 3]] : [] });
-      const d = { tokens: m.decode(ids), probs: r.probs, attn: r.attnLast[1][3] };
-      cache.set(key, d);
-      return d;
-    }
-    const cards = ['mem', 'ctxs'].map((k) => {
-      const host = hosts[k];
-      const cv = ctx.canvas(host.canvas, { label: k === 'mem' ? 'Memory sentence' : 'Context sentence', height: (w) => (w < 400 ? 122 : 138) });
-      return { k, host, cv, Lo: null };
-    });
-    function drawCard(c) {
-      const cv = c.cv; if (!cv.w) return;
-      const g = cv.g, w = cv.w, h = cv.h, phone = w < 420;
-      cv.clear();
-      const text = sentences(BIND_COLOURS[st.colour])[c.k];
-      const d = dataFor(text, false);
-      const toks = d.tokens, T = toks.length;
-      const size = phone ? 10.5 : 12;
-      const row = D.layoutRow(g, toks, 4, w - 4, { size, gap: phone ? 3 : 5 });
-      const ty = h - 18;
-      const qx = row[T - 1].cx;
-      const dyes = COLOUR_DYE();
-      // attention threads of the binding head from the final "is"
-      const fade = st.mute ? 0.18 : 1;
-      for (let j = 0; j < T - 1; j++) {
-        const wgt = d.attn[j];
-        if (wgt < 0.015) continue;
-        const x2 = row[j].cx;
-        const lift = Math.min(h - 40, 18 + (qx - x2) * 0.32);
-        const B = [qx, ty - 14, qx - (qx - x2) * 0.15, ty - 14 - lift, x2 + (qx - x2) * 0.15, ty - 14 - lift, x2, ty - 14];
-        g.save();
-        g.lineCap = 'round';
-        if (st.mute) g.setLineDash([3, 4]);
-        g.strokeStyle = rgba(HC, 0.18 * fade); g.lineWidth = 2 + 9 * wgt;
-        strokeBezPart(g, B, 1);
-        g.strokeStyle = rgba(HC, (0.35 + 0.65 * wgt) * fade); g.lineWidth = 0.7 + 3 * wgt;
-        strokeBezPart(g, B, 1);
-        g.restore();
-        if (wgt > 0.25 && !st.mute) {
-          const top = bez(B, 0.5);
-          D.text(g, wgt.toFixed(2), top.x, top.y - 5, { role: 'mono', size: phone ? 8 : 9, color: HC, align: 'center' });
-        }
-      }
-      if (st.mute) {
-        // a snip across the head's threads
-        const sx = qx - 10, sy = ty - 34;
-        g.strokeStyle = AM.dye.madder; g.lineWidth = 1.6;
-        g.beginPath(); g.moveTo(sx - 6, sy - 6); g.lineTo(sx + 6, sy + 6); g.moveTo(sx + 6, sy - 6); g.lineTo(sx - 6, sy + 6); g.stroke();
-      }
-      toks.forEach((s, i) => {
-        const ts = Math.max(6, size * Math.min(1, row[i].scale + 0.08)), px = phone ? 4 : 6;
-        // D.token's colour underline needs a chip wider than 14px (it can be narrower mid-resize)
-        const wide = D.measure(g, s, ts, 'body', 600) + 2 * px > 18;
-        D.token(g, s, row[i].cx, ty, { size: ts, padX: px, padY: phone ? 4 : 5, selected: i === T - 1, underline: wide ? dyes[s] || null : null, radius: 5 });
-      });
-      D.text(g, phone ? `${headName(1, 3)} at “is”` : `${headName(1, 3)} (L1H3) at “is”`, 4, 14, { role: 'mono', size: phone ? 8 : 9, color: HC });
-      cv.canvas.setAttribute('aria-label', `“${text}”. Attention of ${headName(1, 3)} (layer 1, head 3) from the last word: ${toks.slice(0, -1).map((s, j) => `${s} ${d.attn[j].toFixed(2)}`).filter((_, j) => d.attn[j] > 0.05).join(', ')}.`);
-    }
-    function refresh() {
-      const c = BIND_COLOURS[st.colour];
-      const s = sentences(c);
-      const dyes = COLOUR_DYE();
-      for (const card of cards) {
-        drawCard(card);
-        const text = s[card.k];
-        const d = dataFor(text, st.mute);
-        const top = argmax(d.probs);
-        const word = m.vocab[top];
-        card.host.ans.innerHTML = `<span class="ct-w" style="color:${dyes[word] || 'var(--linen)'}">${esc(word)}</span><span class="ct-p">${pct(d.probs[top])}${st.mute ? ' · head muted' : ''}</span>`;
-      }
-      const dm = dataFor(s.mem, false), dc = dataFor(s.ctxs, false);
-      const dmM = dataFor(s.mem, true), dcM = dataFor(s.ctxs, true);
-      const colIdxC = dc.tokens.indexOf(c, 3), colIdxM = dm.tokens.indexOf(c, 3);
-      const said = m.vocab[argmax(dm.probs)];
-      const lead = said === c ? `You told it the sky is <b>${c}</b>, which matches what it remembers. It answers <b>${esc(said)}</b>.` : `You told it the sky is <b>${c}</b>. It answers <b>${esc(said)}</b> anyway.`;
-      hosts.mem.note.innerHTML = `${lead} The head gives the word “${c}” only <span class="mv-n">${dm.attn[colIdxM].toFixed(2)}</span> of its attention. Muted: <b>${esc(m.vocab[argmax(dmM.probs)])}</b> <span class="mv-n">${pct(dmM.probs[argmax(dmM.probs)])}</span>.`;
-      hosts.ctxs.note.innerHTML = `The box's colour is only in the sentence. The head puts <span class="mv-n">${dc.attn[colIdxC].toFixed(2)}</span> of its attention on “${c}”. Muted: <b>${esc(m.vocab[argmax(dcM.probs)])}</b> <span class="mv-n">${pct(dcM.probs[argmax(dcM.probs)])}</span>, and ${c} gets <span class="mv-n">${pct(dcM.probs[m.tokenId(c)])}</span>.`;
-    }
-    const sw = AM.ui.tokens(BIND_COLOURS, { selected: st.colour, label: 'Colour in the sentence', colors: (i) => COLOUR_DYE()[BIND_COLOURS[i]], onSelect: (i) => { st.colour = i; refresh(); } });
-    sw.chips.forEach((c, i) => { c.id = `mv-ct-c${i}`; });
-    sw.el.classList.add('ct-swatches');
-    const muteT = AM.ui.toggle({ id: 'mv-ct-mute', label: `Mute ${headName(1, 3)} (L1H3)`, checked: false, onChange: (b) => { st.mute = b; refresh(); } });
-    hosts.ctl.append(AM.el('span', { class: 'ct-lab' }, 'Tell it a colour'), sw.el, muteT.el);
-    cards.forEach((c) => c.cv.onResize(() => drawCard(c)));
-    refresh();
-  }
-
   // ==================================================================== chapter
   AM.chapter({
     id: ID,
@@ -1627,7 +1531,7 @@
           ps: [
             `The MLP takes a normalised copy of the word’s ${n(C.d_model)} numbers (LayerNorm, chapter 7) and multiplies it by a ${C.d_model} × ${C.d_ff} matrix, W<sub>in</sub>, plus a bias. Out come ${n(C.d_ff)} numbers, one per <span class="term">hidden neuron</span>. Gold beads are positive, red negative.`,
             `<span class="math block">h = LN(x) · W<sub>in</sub> + b<sub>in</sub></span>`,
-            `Four times wider than the stream is the usual choice. GPT-3 widens ${n('12,288')} numbers to ${n('49,152')}. Matrices this size add up: the MLPs hold ${n(comma(mlpParams))} of our model’s ${n(comma(total))} parameters (${n(Math.round((100 * mlpParams) / total) + '%')}), and about two thirds of GPT-3’s (${n(Math.round(g3share * 100) + '%')}).`,
+            `Four times wider than the stream is the classic choice: GPT-3 widens ${n('12,288')} numbers to ${n('49,152')}. Many newer models use a gated MLP (more below) and widen about 2.7 to 3.5 times. Matrices this size add up: the MLPs hold ${n(comma(mlpParams))} of our model’s ${n(comma(total))} parameters (${n(Math.round((100 * mlpParams) / total) + '%')}, not counting their LayerNorms), and about two thirds of GPT-3’s (${n(Math.round(g3share * 100) + '%')}).`,
           ],
         }),
         () => ({
@@ -1724,19 +1628,18 @@
       const quote = (() => {
         const run = (t, o) => E.run(m.encode(t).ids, o);
         const fr = run('the capital of france is', { chain: true }), id = m.tokenId('paris');
-        const frOff = run('the capital of france is', { mlpOff: [new Set(MM.range(C.d_ff)), null, null] });
         const frMute = run('the capital of france is', { mute: [[0, 2]] });
-        // the same silencing at "because" in a pronoun sentence: MLP 0 is groundwork for every skill (model-notes §2)
-        const pron = run('the queen opened the door because', { mlpOff: [new Set(MM.range(C.d_ff)), null, null] });
+        // memory against context: the sky stays blue whatever colour the sentence gives it; a box takes the sentence's colour
+        const sky = run('the red ball and the green sky . the sky is').probs, box = run('the red ball and the green box . the box is').probs;
         const frIds = m.encode('the capital of france is').ids;
         const nAll = FACT_SETS.reduce((s, x) => s + x.items.length, 0);
         let ok = 0; FACT_SETS.forEach((fs) => fs.items.forEach((it) => { const p = run(it.text).probs; if (argmax(p) === m.tokenId(it.ans)) ok++; }));
         return {
           nAll, ok,
           // chain: [embed, after attn 0, after MLP 0, after attn 1, …]
-          frIn: fr.chain[1][id], frOut: fr.chain[2][id], frOff: frOff.probs[id],
+          frIn: fr.chain[1][id], frOut: fr.chain[2][id],
           muteTop: m.vocab[argmax(frMute.probs)], muteP: frMute.probs[argmax(frMute.probs)],
-          pronTop: m.vocab[argmax(pron.probs)],
+          skyTop: m.vocab[argmax(sky)], skyP: sky[argmax(sky)], boxTop: m.vocab[argmax(box)],
           // attention of L0H2 from "is" to "france"
           l0h2: fr.attnLast[0][2][frIds.indexOf(m.tokenId('france'))],
         };
@@ -1745,35 +1648,18 @@
         el('div', { class: 'prose' },
           el('span', { class: 'mv-kicker' }, 'Where facts live'),
           el('h3', { id: 'mv-fx-h' }, 'Open the vaults'),
-          el('p', { html: `Our model memorised ${n(quote.nAll)} facts: the capitals of 8 countries (both ways round), what 8 animals say and the colours of 6 things. It gets ${quote.ok === quote.nAll ? 'all ' : ''}${n(quote.ok)} right. None of them can be worked out from the sentence, so they must be stored in the weights.` }),
+          el('p', { html: `Our model memorised ${n(quote.nAll)} facts: the capitals of 8 countries (both ways round), what 8 animals say and the colours of 6 things. It gets ${quote.ok === quote.nAll ? 'all ' : ''}${n(quote.ok)} right. None of them can be worked out from the sentence, so they must be stored in the weights.${quote.skyTop === 'blue' && quote.boxTop === 'green' ? ` Memory can even overrule the sentence. Given “the red ball and the green sky . the sky is”, the model still answers ${A('blue')} (${n(pct(quote.skyP))}). Make it a green box and it answers green.` : ''}` }),
           el('p', { html: `In large models, experiments that switch off parts of the network point to MLPs as a main store of facts. MLPs in the middle layers, working at the subject’s last word, seem to recall what the model knows about it, and attention later carries that to the end of the sentence <span class="mv-cite">(<a href="https://arxiv.org/abs/2202.05262" target="_blank" rel="noopener">Meng et al., 2022</a>)</span>. Our tiny model seems to do a simpler version: attention fetches the country to the last word, and the MLPs there turn it into the answer.` }),
-          el('p', { html: `In “the capital of france is”, ${headName(0, 2)} (L0H2) puts ${n(quote.l0h2.toFixed(2))} of its attention from “is” on “france”. Mute it, and the model still names a capital, just the wrong one: ${R(quote.muteTop)} (${n(pct(quote.muteP))}). Across the first MLP, P(paris) jumps from ${n(pct(quote.frIn))} to ${n(pct(quote.frOut))}, and silencing that MLP at “is” leaves ${n(pct(quote.frOff))}. That test is blunt, though. A model this small also uses its first MLP as groundwork for everything: silenced at “because”, it turns “the queen opened the door because …” from <em>she</em> into ${R(quote.pronTop)}. The cat in the vault above is a cleaner test: there only a few neurons of the last MLP are switched off, and nothing runs after them.` }),
-          el('p', { html: 'Try the others. The ladder decodes the stream after every stage as if the model stopped there, a trick called the <span class="term">logit lens</span>. The vaults show every neuron of all three MLPs at the last word. Click neurons to silence them, or use the slider.' })),
+          el('p', { html: `In “the capital of france is”, ${headName(0, 2)} (L0H2) puts ${n(quote.l0h2.toFixed(2))} of its attention from “is” on “france”. Mute it, and the model still names a capital, just the wrong one: ${R(quote.muteTop)} (${n(pct(quote.muteP))}). Across the first MLP, P(paris) then jumps from ${n(pct(quote.frIn))} to ${n(pct(quote.frOut))}.` }),
+          el('p', { html: 'Try the others. The ladder reads the stream after every stage as if the model stopped there (chapter 8 calls this the logit lens). The vaults show every neuron of all three MLPs at the last word. Click neurons to silence them, or use the slider.' })),
         el('div', { class: 'panel fx-panel' },
-          ui.figure({ title: 'Fact explorer', badge: 'live', caption: 'Live model. Silencing sets a neuron’s output to zero at the last word only; every other word runs normally. Muting a head zeroes its output at every position. The logit lens uses the final LayerNorm and unembedding: exact after the last MLP, a rough reading at earlier stages. Dashed outlines show the unsilenced values.' },
+          ui.figure({ title: 'Fact explorer', badge: 'live', caption: 'Live model. Silencing sets a neuron’s output to zero at the last word only; every other word runs normally. Muting a head zeroes its output at every position. The ladder decodes each stage with the final LayerNorm and the unembedding (the matrix that turns the stream into a score per word, chapter 9): exact after the last MLP, a rough reading at earlier stages. Dashed outlines show the unsilenced values.' },
             fxPick, fxPrompt,
             el('div', { class: 'fx-grid' },
               el('div', {}, el('div', { class: 'fx-sub' }, 'P(answer) through the layers'), fxLadder),
               el('div', {}, el('div', { class: 'fx-sub' }, 'The vaults · every neuron at the last word'), fxWalls)),
             fxCtl, fxResult))));
       buildExplorer(ctx, { pick: fxPick, prompt: fxPrompt, ladder: fxLadder, walls: fxWalls, ctl: fxCtl, result: fxResult }, S);
-
-      // ---------------------------------------------------------------- 4. memory or context
-      const mk = () => ({ canvas: el('div'), ans: el('div', { class: 'ct-ans', 'aria-live': 'polite' }), note: el('p', { class: 'ct-note' }) });
-      const ctMem = mk(), ctCtx = mk();
-      const ctCtl = el('div', { class: 'ct-ctl' });
-      body.appendChild(el('section', { class: 'ch-wide mv-sec', 'aria-labelledby': 'mv-ct-h' },
-        el('div', { class: 'prose' },
-          el('span', { class: 'mv-kicker' }, 'Memory or context'),
-          el('h3', { id: 'mv-ct-h' }, 'Same question, two machines'),
-          el('p', { html: '“The sky is …” and “the box is …” look alike, and our model answers both with a colour. The box’s colour can only come from the sentence. The sky’s comes from memory. Tell the model a colour and watch which answer follows it.' })),
-        el('div', { class: 'panel ct-panel' },
-          ui.figure({ title: 'Memory vs context', badge: 'live', caption: `Live model. Threads show the attention of ${headName(1, 3)} (layer 1, head 3) from the final “is”, with its weights as numbers. In binding questions this head lands on the matching colour. Muting zeroes its output at every position.` },
-            ctCtl,
-            el('div', { class: 'ct-cards' },
-              el('div', { class: 'ct-card' }, el('h4', {}, 'From memory'), ctMem.canvas, ctMem.ans, ctMem.note),
-              el('div', { class: 'ct-card' }, el('h4', {}, 'From context'), ctCtx.canvas, ctCtx.ans, ctCtx.note))))));
-      buildContrast(ctx, { mem: ctMem, ctxs: ctCtx, ctl: ctCtl }, S);
 
       // ---------------------------------------------------------------- key idea
       body.appendChild(el('div', { class: 'callout' },

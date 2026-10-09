@@ -1,12 +1,15 @@
 /* Chapter 04 — Self-attention: "Threads of Attention".
    The centrepiece. A sticky "loom" stage walks through q/k/v, scores, the
    causal mask, softmax, the weighted sum of values, the full attention matrix
-   (woven by a shuttle) and the matrix formula. Below it, a free-play workbench
-   and a small experiment on why scores are divided by √d_k.
+   (woven by a shuttle) and the matrix formula. Below it, a free-play workbench,
+   a small experiment on why scores are divided by √d_k, and the RoPE lab
+   (position applied to queries and keys; it lives here rather than in
+   chapter 3 because it needs q, k and q·k).
 
-   All numbers come from the toy model defined at the top of this file:
-   hand-built embeddings (d_model = 8) and hand-built W_Q, W_K, W_V (d_k = 4)
-   and W_O. Every score, weight and output vector shown is computed from them. */
+   The loom and workbench numbers come from the toy model defined at the top
+   of this file: hand-built embeddings (d_model = 8) and hand-built W_Q, W_K,
+   W_V (d_k = 4) and W_O. Every score, weight and output vector shown is
+   computed from them. The RoPE lab uses its own toy q and k (d_k = 8). */
 (() => {
   const ID = 'attention';
   const M = AM.math;
@@ -216,6 +219,32 @@
       new IntersectionObserver((es) => { for (const e of es) s.on = e.isIntersecting; }, { rootMargin: `${margin} 0px ${margin} 0px` }).observe(node);
     }
     return s;
+  }
+  /** Ink or linen, whichever reads better on an opaque background colour ('rgb(…)' or '#hex'): keeps cell numbers above 4.5:1. */
+  function textOn(bg) {
+    const m = String(bg).match(/\d+(\.\d+)?/g);
+    const rgb = String(bg).startsWith('#') ? AM.hexToRgb(bg) : (m || [0, 0, 0]).slice(0, 3).map(Number);
+    const lum = (c) => { const [r, g2, b] = c.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }); return 0.2126 * r + 0.7152 * g2 + 0.0722 * b; };
+    const L = lum(rgb), Li = lum(AM.hexToRgb(AM.col.ink)), Ll = lum(AM.hexToRgb(AM.col.linen));
+    const cL = (Ll + 0.05) / (L + 0.05), cI = (L + 0.05) / (Li + 0.05);
+    if (Math.max(cL, cI) >= 4.5) return cL >= cI ? AM.col.linen : AM.col.ink;
+    // mid-tone cells: pure white or black is what clears 4.5:1
+    return 1.05 / (L + 0.05) >= (L + 0.05) / 0.05 ? '#ffffff' : '#000000';
+  }
+  /** Text colour for a masked (−∞) cell: madder lifted toward linen, so it reads on its madder-tinted cell. */
+  const MASK_TEXT = () => AM.mix(AM.dye.madder, AM.col.linen, 0.45);
+  /** Left-aligned canvas text in which every “d_k” is drawn as d with a subscript k, matching the prose. */
+  function textDk(g, str, x, y, o = {}) {
+    const size = o.size || 14, role = o.role || 'body', sub = Math.max(8.5, size * 0.75);
+    const parts = String(str).split('d_k');
+    let cx = x;
+    parts.forEach((part, i) => {
+      if (part) { AM.draw.text(g, part, cx, y, o); cx += AM.draw.measure(g, part, size, role, o.weight); }
+      if (i < parts.length - 1) {
+        AM.draw.text(g, 'd', cx, y, o); cx += AM.draw.measure(g, 'd', size, role, o.weight);
+        AM.draw.text(g, 'k', cx + 0.5, y + size * 0.3, { ...o, size: sub }); cx += AM.draw.measure(g, 'k', sub, role, o.weight) + 1;
+      }
+    });
   }
   /** Word-wrap text into lines that fit maxW. */
   function wrapLines(g, str, maxW, font) {
@@ -532,7 +561,7 @@
 
       body.appendChild(el('div', { class: 'prose att-intro' },
         el('p', { html: 'Up to now every token has travelled alone. Its vector knows which word it is and where it sits, nothing more: the vector for <strong>“it”</strong> has no idea there is a cat in the sentence.' }),
-        el('p', { html: '<span class="term">Self-attention</span> is the step where tokens read from one another. It is the only place in a transformer where information moves between positions; everything else works on one token at a time.' }),
+        el('p', { html: '<span class="term">Self-attention</span> is the step where tokens read from one another. Chapter 3 watched it from the outside, as a bag that ignores order. This chapter opens the bag.' }),
       ));
 
       // ------------------------------------------------ scrollytelling split
@@ -1190,7 +1219,7 @@
       // ------------------------------------------------ loom (matrix) scene: steps 6–7
       const PHASES = [
         { key: 'qk', label: 'Q Kᵀ: every query dotted with every key, all at once' },
-        { key: 'scale', label: '÷ √d_k: here d_k = 4, so every score is halved' },
+        { key: 'scale', label: '÷ √4 = 2: the keys have 4 numbers, so every score is halved' },
         { key: 'mask', label: '+ M: −∞ above the diagonal hides the future' },
         { key: 'soft', label: 'softmax, row by row: positive weights that sum to 1' },
         { key: 'v', label: '· V: each row of weights blends the values into one output' },
@@ -1398,6 +1427,8 @@
       buildWorkbench(body, ctx);
       // ------------------------------------------------ why √d_k
       buildWhyScale(body, ctx);
+      // ------------------------------------------------ RoPE: position inside attention
+      buildRope(body, ctx);
 
       body.appendChild(el('div', { class: 'callout att-key' },
         el('div', { class: 'callout-label' }, 'Key idea'),
@@ -1537,7 +1568,7 @@
       const wrap = el('div', { class: 'att-wgrid' });
       const X = embed(toks);
       const sm = (title, data, rl, cl) => wrap.appendChild(el('div', { class: 'att-mat' }, el('div', { class: 'fig-title', html: title }),
-        ui.matrix({ data, rowLabels: rl, colLabels: cl, format: (v) => (v === 0 ? '·' : fmt(v, v === Math.round(v * 10) / 10 ? 1 : 2)), color: (v) => AM.color.div(v, 3), textColor: () => AM.col.linen }).el));
+        ui.matrix({ data, rowLabels: rl, colLabels: cl, format: (v) => (v === 0 ? '·' : fmt(v, v === Math.round(v * 10) / 10 ? 1 : 2)), color: (v) => AM.color.div(v, 3), textColor: (v) => textOn(AM.color.div(v, 3)) }).el));
       sm('X · embeddings <span class="att-nocase">(d<sub>model</sub> = 8)</span>', X, toks, FEAT_SHORT);
       sm('W<sub>Q</sub>', W_Q, FEAT_SHORT, ['1', '2', '3', '4']);
       sm('W<sub>K</sub>', W_K, FEAT_SHORT, ['1', '2', '3', '4']);
@@ -1557,14 +1588,16 @@
       for (let ri = 0; ri < 4; ri++) for (let j = 0; j < toks.length; j++) {
         const c = tableNarrow ? scoreMx.cells[j][ri] : scoreMx.cells[ri][j];
         const v = data[ri][j];
-        if (ri === 3) { c.style.background = AM.color.heat(0.1 + 0.9 * Math.sqrt(v)); c.style.color = v > 0.45 ? AM.col.ink : AM.col.linen; }
-        else if (v === -Infinity) { c.style.background = AM.rgba(AM.dye.madder, 0.22); c.style.color = AM.dye.madder; }
-        else { c.style.background = AM.color.div(v, ri === 0 ? dmax : smax); c.style.color = AM.col.linen; }
+        if (ri === 3) { const bg = AM.color.heat(0.1 + 0.9 * Math.sqrt(v)); c.style.background = bg; c.style.color = textOn(bg); }
+        else if (v === -Infinity) { c.style.background = AM.rgba(AM.dye.madder, 0.22); c.style.color = MASK_TEXT(); }
+        else { const bg = AM.color.div(v, ri === 0 ? dmax : smax); c.style.background = bg; c.style.color = textOn(bg); }
       }
       // stage labels reflect the current scaling
       const lab = scoreMx.el.querySelectorAll(tableNarrow ? '[role=columnheader]' : '.mx-head.row');
       const f = A.factor;
-      if (lab[1]) lab[1].textContent = state.scale ? (state.mult === 1 ? '÷ √d_k' : `÷ √d_k × ${state.mult.toFixed(2)}`) : `× ${state.mult.toFixed(2)}`;
+      // one wrapping span: the header cell is a grid, so bare text + <sub> would become two grid items
+      const dk = '÷ √d<sub>k</sub>';
+      if (lab[1]) lab[1].innerHTML = `<span class="att-nocase">${state.scale ? (state.mult === 1 ? dk : `${dk} × ${state.mult.toFixed(2)}`) : `× ${state.mult.toFixed(2)}`}</span>`;
       if (lab[1]) lab[1].title = `score = q·k × ${f.toFixed(3)}`;
       qMx.update(A.Q); kMx.update(A.K); vMx.update(A.V);
       paintHover();
@@ -1595,7 +1628,8 @@
       stats.append(
         el('span', {}, 'strongest ', el('b', {}, `${tokShort(toks, jb)} ${pct(w[jb])}`)),
         el('span', {}, 'Σ weights ', el('b', {}, w.reduce((a, b) => a + b, 0).toFixed(3))),
-        el('span', { title: 'exp(entropy) of the weights: 1 = all on one token' }, 'effective tokens ', el('b', {}, eff.toFixed(2))),
+        // how many tokens the weight is spread over: exp(entropy), 1 when it all sits on one token
+        el('span', { title: 'exp(entropy) of the weights: 1 = all on one token' }, 'spread ', el('b', {}, `≈ ${eff.toFixed(1)} tokens`), el('span', { class: 'att-dim' }, ' (1 = all on one)')),
       );
       outBox.innerHTML = '';
       const o = A.O[i];
@@ -1837,15 +1871,15 @@
       });
       hist(g, Dd.raw, pad, w - pad, hy0 + 8, hy1, L, 96, AM.dye.madder, 0.16);
       hist(g, Dd.scaled, pad, w - pad, hy0 + 8, hy1, L, 96, AM.dye.weld, 0.3);
-      AM.draw.text(g, `q·k   spread ${Dd.sdRaw.toFixed(2)}  (√d_k = ${Math.sqrt(Dd.d).toFixed(2)})`, pad, 10, { size: phone ? 9.5 : 10.5, role: 'mono', color: AM.dye.madder, baseline: 'middle' });
-      AM.draw.text(g, `q·k / √d_k   spread ${Dd.sdScaled.toFixed(2)}`, pad, 25, { size: phone ? 9.5 : 10.5, role: 'mono', color: AM.dye.weld, baseline: 'middle' });
+      textDk(g, `q·k   spread ${Dd.sdRaw.toFixed(2)}  (√d_k = ${Math.sqrt(Dd.d).toFixed(2)})`, pad, 10, { size: phone ? 9.5 : 10.5, role: 'mono', color: AM.dye.madder, baseline: 'middle' });
+      textDk(g, `q·k / √d_k   spread ${Dd.sdScaled.toFixed(2)}`, pad, 25, { size: phone ? 9.5 : 10.5, role: 'mono', color: AM.dye.weld, baseline: 'middle' });
       // softmax rows
       const rows = [['softmax(q·k)', Dd.wRaw, AM.dye.madder], ['softmax(q·k / √d_k)', Dd.wScaled, AM.dye.weld]];
       const ry0 = hy1 + 30, rh = (h - ry0 - 8) / 2;
       rows.forEach(([lab, wv, c], r) => {
         const y = ry0 + r * rh;
         const maxW = Math.max(...wv);
-        AM.draw.text(g, lab, pad, y + 8, { size: phone ? 9.5 : 10.5, role: 'mono', color: c, baseline: 'middle' });
+        textDk(g, lab, pad, y + 8, { size: phone ? 9.5 : 10.5, role: 'mono', color: c, baseline: 'middle' });
         AM.draw.text(g, `max ${pct(maxW)}`, w - pad, y + 8, { size: phone ? 9.5 : 10.5, role: 'mono', color: AM.col.linenDim, baseline: 'middle', align: 'right' });
         const by0 = y + 18, by1 = y + rh - 6, bw = (w - 2 * pad) / 8;
         wv.forEach((p, k) => {
@@ -1863,7 +1897,332 @@
   }
 
   // ====================================================================
-  // 8. Chapter CSS (every selector scoped to #ch-attention)
+  // 8. RoPE: position applied to queries and keys (moved here from chapter 3,
+  //    where q and k were not yet known). Toy q and k (d_k = 8), rotated
+  //    exactly with θ_i = 10000^(−2i/d_k).
+  // ====================================================================
+  const ROPE_BASE = 10000;
+  const TAU = Math.PI * 2;
+  const DR = AM.draw;
+  const dotv = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
+  /** Frame-rate independent smoothing toward a target (rate = speed · dt). */
+  const approach = (x, target, rate) => x + (target - x) * (1 - Math.exp(-rate));
+  /** Canvas text with a hand-drawn subscript (the mono face has no subscript digits); subscripts stay ≥ 8.5px. Returns the right edge. */
+  function subText(g, base, subscript, x, y, o = {}) {
+    const size = o.size || 10, role = o.role || 'mono', ss = Math.max(8.5, size * 0.72);
+    const bw = DR.measure(g, base, size, role, o.weight);
+    const sw = DR.measure(g, subscript, ss, role, o.weight);
+    const x0 = o.align === 'center' ? x - (bw + sw) / 2 : o.align === 'right' ? x - bw - sw : x;
+    DR.text(g, base, x0, y, { ...o, size, role, align: 'left' });
+    DR.text(g, subscript, x0 + bw + 0.5, y + size * 0.3, { ...o, size: ss, role, align: 'left' });
+    return x0 + bw + 0.5 + sw;
+  }
+  /** Dial face: soft disc, rim, optional ticks and crosshair (the clock faces of chapter 3). */
+  function dialFace(g, cx, cy, r, o = {}) {
+    g.save();
+    const grd = g.createRadialGradient(cx - r * 0.25, cy - r * 0.35, r * 0.05, cx, cy, r);
+    grd.addColorStop(0, AM.col.ink3);
+    grd.addColorStop(1, AM.col.ink2);
+    g.fillStyle = grd;
+    g.globalAlpha = o.alpha ?? 1;
+    g.beginPath(); g.arc(cx, cy, r, 0, TAU); g.fill();
+    g.lineWidth = o.rimWidth || 1;
+    g.strokeStyle = o.rim || AM.col.ruleStrong;
+    g.stroke();
+    if (o.cross) {
+      g.strokeStyle = AM.rgba(AM.col.linen, 0.07);
+      g.beginPath(); g.moveTo(cx - r, cy); g.lineTo(cx + r, cy); g.moveTo(cx, cy - r); g.lineTo(cx, cy + r); g.stroke();
+    }
+    const ticks = o.ticks ?? (r > 13 ? 12 : 0);
+    if (ticks) {
+      g.strokeStyle = AM.rgba(AM.col.linen, 0.22);
+      g.beginPath();
+      for (let k = 0; k < ticks; k++) {
+        const a = (k / ticks) * TAU, long = k % (ticks / 4) === 0;
+        const r0 = r * (long ? 0.8 : 0.88);
+        g.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0);
+        g.lineTo(cx + Math.cos(a) * r * 0.96, cy + Math.sin(a) * r * 0.96);
+      }
+      g.stroke();
+    }
+    g.restore();
+  }
+  /** A glowing clock hand at math angle `ang` (counter-clockwise from 3 o'clock). */
+  function hand(g, cx, cy, len, ang, color, o = {}) {
+    const tx = cx + Math.cos(ang) * len, ty = cy - Math.sin(ang) * len;
+    g.save();
+    g.globalAlpha = o.alpha ?? 1;
+    g.lineCap = 'round';
+    g.strokeStyle = AM.rgba(color, 0.22);
+    g.lineWidth = (o.width || 1.6) * 3.2;
+    g.beginPath(); g.moveTo(cx, cy); g.lineTo(tx, ty); g.stroke();
+    g.strokeStyle = color;
+    g.lineWidth = o.width || 1.6;
+    g.beginPath(); g.moveTo(cx, cy); g.lineTo(tx, ty); g.stroke();
+    g.restore();
+    if (o.bead !== false) DR.glowDot(g, tx, ty, o.bead || 2, color, o.alpha ?? 1);
+    return { x: tx, y: ty };
+  }
+  /** Arrow from the centre of a dial (math-angle convention). */
+  function dialArrow(g, cx, cy, len, ang, color, o = {}) {
+    const tx = cx + Math.cos(ang) * len, ty = cy - Math.sin(ang) * len;
+    g.save();
+    g.strokeStyle = AM.rgba(color, 0.2 * (o.alpha ?? 1));
+    g.lineWidth = (o.width || 2) * 3;
+    g.lineCap = 'round';
+    if (!o.dash) { g.beginPath(); g.moveTo(cx, cy); g.lineTo(tx, ty); g.stroke(); }
+    g.restore();
+    DR.arrow(g, cx, cy, tx, ty, { color, width: o.width || 2, head: o.head || 9, alpha: o.alpha ?? 1, dash: o.dash });
+    return { x: tx, y: ty };
+  }
+
+  function mountRope(ctx) {
+    const el = ctx.el;
+    const D = 8, NP = D / 2, MAXP = 30;
+    const theta = (i) => Math.pow(ROPE_BASE, (-2 * i) / D); // RoPE speeds: the same clock speeds as chapter 3's sinusoids
+    // toy query and key contents (before any rotation)
+    const Q = [0.92, 0.42, 0.68, -0.32, 0.4, 0.62, -0.5, 0.3];
+    const K = [0.78, -0.34, 0.48, 0.6, -0.36, 0.5, 0.44, 0.36];
+
+    /** RoPE: rotate pair i of v by the angle pos·θ_i. */
+    const rope = (v, pos) => {
+      const out = new Array(D);
+      for (let i = 0; i < NP; i++) {
+        const ang = pos * theta(i), c = Math.cos(ang), s = Math.sin(ang);
+        out[2 * i] = v[2 * i] * c - v[2 * i + 1] * s;
+        out[2 * i + 1] = v[2 * i] * s + v[2 * i + 1] * c;
+      }
+      return out;
+    };
+    /** The attention logit before the 1/√d_k scale: RoPE(q, m) · RoPE(k, n). */
+    const score = (m, n) => dotv(rope(Q, m), rope(K, n));
+    const pairScore = (m, n, i) => { const q = rope(Q, m), k = rope(K, n); return q[2 * i] * k[2 * i] + q[2 * i + 1] * k[2 * i + 1]; };
+    const pairNorm = (v, i) => Math.hypot(v[2 * i], v[2 * i + 1]);
+    const normMax = Math.max(...[0, 1, 2, 3].flatMap((i) => [pairNorm(Q, i), pairNorm(K, i)]));
+    // the score as a function of the offset alone: S(Δ) = RoPE(q, Δ)·RoPE(k, 0)
+    const curve = Array.from({ length: 2 * MAXP + 1 }, (_, i) => score(i - MAXP, 0));
+    const cMin = Math.min(...curve), cMax = Math.max(...curve);
+    const thLabel = (t) => String(+t.toPrecision(2)); // 1, 0.1, 0.01, 0.001
+
+    const st = { m: 7, n: 3, am: 7, an: 3, pair: 0, msg: '', dirty: true, flash: 0 };
+
+    function geom(w) {
+      const wide = w >= 440;
+      const G = { w, wide };
+      if (wide) {
+        G.R = Math.min(w * 0.24, 132);
+        G.cx = G.R + 18; G.cy = 40 + G.R; // room for the q / k labels beyond the rim
+        const x0 = G.cx + G.R + 26, aw = w - x0;
+        G.mr = Math.min(aw / 5.2, 30);
+        G.mx = [0, 1, 2, 3].map((i) => x0 + aw * (i % 2 ? 0.74 : 0.26));
+        G.my = [0, 1, 2, 3].map((i) => G.cy + (i < 2 ? -0.42 : 0.48) * G.R);
+        G.miniTitle = { x: x0 + aw / 2, y: G.cy - G.R + 2 };
+        G.cTop = G.cy + G.R + 58; G.cH = 118;
+      } else {
+        G.R = Math.min(w * 0.3, 112);
+        G.cx = w / 2; G.cy = 40 + G.R;
+        G.mr = Math.min(w / 11, 24);
+        const sp = Math.min(w / 4.2, 100);
+        G.mx = [0, 1, 2, 3].map((i) => w / 2 + (i - 1.5) * sp);
+        G.my = [0, 1, 2, 3].map(() => G.cy + G.R + 36 + G.mr);
+        G.miniTitle = { x: w / 2, y: G.cy + G.R + 24 };
+        G.cTop = G.my[0] + G.mr + 66; G.cH = 104;
+      }
+      G.cBot = G.cTop + G.cH;
+      G.cx0 = 40; G.cx1 = w - 10;
+      G.h = G.cBot + 24;
+      return G;
+    }
+
+    const cv = ctx.canvas(null, {
+      height: (w) => geom(w).h,
+      label: 'A dial with a gold query arrow and a blue key arrow, each rotated in proportion to its position, beside four smaller dials for the four pairs of dimensions, above a curve of the dot product against the offset between the two positions.',
+    });
+    const readout = el('p', { class: 'att-rope-readout' });
+
+    const mS = AM.ui.slider({ id: 'pos-rope-m', label: 'query position m', min: 0, max: MAXP, step: 1, value: st.m, format: String, onInput: (v) => set(v, st.n, 'm') });
+    const nS = AM.ui.slider({ id: 'pos-rope-n', label: 'key position n', min: 0, max: MAXP, step: 1, value: st.n, format: String, onInput: (v) => set(st.m, v, 'n') });
+    mS.el.classList.add('att-lc'); nS.el.classList.add('att-lc');
+    const back = AM.ui.button({ id: 'pos-rope-back', label: '← Both −1', onClick: () => set(st.m - 1, st.n - 1, 'both') });
+    const fwd = AM.ui.button({ id: 'pos-rope-fwd', label: 'Both +1 →', kind: 'primary', onClick: () => set(st.m + 1, st.n + 1, 'both') });
+    const pairSeg = AM.ui.segmented({
+      id: 'pos-rope-pair', label: 'Big dial shows pair', value: 0,
+      options: [0, 1, 2, 3].map((i) => ({ value: i, label: String(i) })),
+      onChange: (v) => { st.pair = v; st.dirty = true; },
+    });
+
+    function set(m, n, why) {
+      m = Math.round(m); n = Math.round(n);
+      if (why === 'both' && (m < 0 || n < 0 || m > MAXP || n > MAXP)) {
+        // one of them is at the edge: refuse rather than silently change the offset
+        st.msg = 'edge';
+        updateReadout(); return;
+      }
+      m = clamp(m, 0, MAXP); n = clamp(n, 0, MAXP);
+      const before = score(st.m, st.n), offBefore = st.m - st.n;
+      st.m = m; st.n = n;
+      mS.set(m); nS.set(n);
+      const after = score(m, n);
+      if (why === 'both') { st.msg = Math.abs(after - before) < 1e-9 ? 'kept' : 'moved'; st.flash = 1; }
+      else st.msg = m - n === offBefore ? 'sameoff' : 'changed';
+      st.dirty = true;
+      updateReadout();
+    }
+
+    function updateReadout() {
+      const s = score(st.m, st.n), off = st.m - st.n;
+      const parts = [0, 1, 2, 3].map((i) => fmt(pairScore(st.m, st.n, i), 3)).join(' + ').replace(/\+ −/g, '− ');
+      let line2;
+      if (st.msg === 'kept') line2 = `Both moved by one: the offset is still ${off} and the score is still <b>${fmt(s, 4)}</b>.`;
+      else if (st.msg === 'changed') line2 = `The offset changed to ${off}, so the score changed too.`;
+      else if (st.msg === 'sameoff') line2 = 'Same offset, same score.';
+      else if (st.msg === 'edge') line2 = 'One position is at the end of the range; move the other one first.';
+      else line2 = 'Press “Both +1” a few times and watch the score.';
+      readout.innerHTML = `q at m = ${st.m}, k at n = ${st.n} · offset m − n = <b>${off}</b><br>q·k = ${parts} = <b>${fmt(s, 4)}</b><br><span class="att-dim">${line2}</span>`;
+    }
+
+    function draw() {
+      if (!cv.w) return;
+      const G = geom(cv.w), g = cv.g;
+      cv.clear();
+      const i = st.pair, th = theta(i);
+      const qa0 = Math.atan2(Q[2 * i + 1], Q[2 * i]), ka0 = Math.atan2(K[2 * i + 1], K[2 * i]);
+      const qa = qa0 + st.am * th, ka = ka0 + st.an * th;
+      const qL = (G.R * 0.9 * pairNorm(Q, i)) / normMax, kL = (G.R * 0.9 * pairNorm(K, i)) / normMax;
+
+      // ---- header
+      const hx = subText(g, 'PAIR ' + i + ' · θ', String(i), 0, 11, { size: 9.5, color: AM.col.mist });
+      DR.text(g, `= ${thLabel(th)} rad per position` + (G.wide ? ' · dashed: before rotation' : ''), hx + 4, 11, { size: 9.5, role: 'mono', color: AM.col.mist });
+      if (!G.wide) DR.text(g, 'dashed: before rotation', 0, 26, { size: 9.5, role: 'mono', color: AM.col.mist });
+
+      // ---- big dial
+      dialFace(g, G.cx, G.cy, G.R, { ticks: 24, cross: true, rim: AM.rgba(AM.dye.weld, 0.4), rimWidth: 1.2 });
+      g.save(); g.strokeStyle = AM.rgba(AM.dye.weld, 0.07); g.lineWidth = 9;
+      g.beginPath(); g.arc(G.cx, G.cy, G.R + 5, 0, TAU); g.stroke(); g.restore();
+      // the wedge between the rotated query and key: its angle is all the score depends on
+      const diff = Math.atan2(Math.sin(qa - ka), Math.cos(qa - ka));
+      g.save();
+      g.fillStyle = AM.rgba(AM.dye.weld, 0.13);
+      g.beginPath(); g.moveTo(G.cx, G.cy); g.arc(G.cx, G.cy, G.R * 0.4, -ka, -(ka + diff), diff > 0); g.closePath(); g.fill();
+      g.strokeStyle = AM.rgba('#fff4d6', 0.6); g.lineWidth = 1;
+      g.beginPath(); g.arc(G.cx, G.cy, G.R * 0.4, -ka, -(ka + diff), diff > 0); g.stroke();
+      g.restore();
+      // rotation arcs: how far position has turned each vector (the part beyond whole turns)
+      const rotArc = (a0, turn, rr, col) => {
+        const t = turn % TAU;
+        if (t < 0.01) return;
+        g.save(); g.strokeStyle = AM.rgba(col, 0.55); g.lineWidth = 1.2; g.setLineDash([2, 3]);
+        g.beginPath(); g.arc(G.cx, G.cy, rr, -a0, -(a0 + t), true); g.stroke(); g.restore();
+      };
+      rotArc(qa0, st.am * th, G.R * 0.6, AM.dye.weld);
+      rotArc(ka0, st.an * th, G.R * 0.68, AM.dye.woad);
+      dialArrow(g, G.cx, G.cy, qL, qa0, AM.dye.weld, { alpha: 0.32, width: 1.2, dash: [3, 3], head: 7 });
+      dialArrow(g, G.cx, G.cy, kL, ka0, AM.dye.woad, { alpha: 0.32, width: 1.2, dash: [3, 3], head: 7 });
+      const kt = dialArrow(g, G.cx, G.cy, kL, ka, AM.dye.woad, { width: 2.4, head: 11 });
+      const qt = dialArrow(g, G.cx, G.cy, qL, qa, AM.dye.weld, { width: 2.4, head: 11 });
+      DR.glowDot(g, G.cx, G.cy, 2.6, AM.col.linen);
+      const lab = (pt, ang, txt, col) => {
+        DR.text(g, txt, pt.x + Math.cos(ang) * 17, pt.y - Math.sin(ang) * 17 + 4, { size: 12, role: 'mono', color: col, align: 'center', weight: 500 });
+      };
+      lab(qt, qa, 'q', AM.dye.weld);
+      lab(kt, ka, 'k', AM.dye.woad);
+
+      // ---- the four pairs, each turning at its own speed
+      DR.text(g, 'EACH PAIR ADDS ITS PART OF q·k', G.miniTitle.x, G.miniTitle.y, { size: 8.5, role: 'mono', color: AM.col.mist, align: 'center', letterSpacing: '0.08em' });
+      for (let p = 0; p < NP; p++) {
+        const cx = G.mx[p], cy = G.my[p], r = G.mr, tp = theta(p);
+        const sel = p === st.pair;
+        if (sel) { g.save(); g.fillStyle = AM.rgba(AM.dye.weld, 0.08); g.beginPath(); g.arc(cx, cy, r + 7, 0, TAU); g.fill(); g.restore(); }
+        dialFace(g, cx, cy, r, { ticks: 12, rim: sel ? AM.dye.weld : AM.col.ruleStrong, rimWidth: sel ? 1.5 : 1 });
+        const qa1 = Math.atan2(Q[2 * p + 1], Q[2 * p]) + st.am * tp, ka1 = Math.atan2(K[2 * p + 1], K[2 * p]) + st.an * tp;
+        hand(g, cx, cy, (r * 0.86 * pairNorm(K, p)) / normMax, ka1, AM.dye.woad, { width: 1.7, bead: 1.6 });
+        hand(g, cx, cy, (r * 0.86 * pairNorm(Q, p)) / normMax, qa1, AM.dye.weld, { width: 1.7, bead: 1.6 });
+        const ps = pairScore(st.m, st.n, p);
+        subText(g, 'θ', String(p), cx - 4, cy + r + 15, { size: 10.5, color: sel ? AM.dye.weld : AM.col.mist, align: 'right' });
+        DR.text(g, '=' + thLabel(tp), cx - 3, cy + r + 15, { size: 10, role: 'mono', color: sel ? AM.dye.weld : AM.col.mist });
+        DR.text(g, (ps >= 0 ? '+' : '') + fmt(ps, 3), cx, cy + r + 30, { size: 10.5, role: 'mono', color: AM.col.linen, align: 'center' });
+      }
+
+      // ---- score vs offset: a function of m − n only
+      const xOf = (dd) => G.cx0 + ((dd + MAXP) / (2 * MAXP)) * (G.cx1 - G.cx0);
+      const pad = (cMax - cMin) * 0.12;
+      const yOf = (v) => G.cBot - ((v - (cMin - pad)) / (cMax - cMin + 2 * pad)) * (G.cBot - G.cTop);
+      DR.text(g, 'SCORE FOR EVERY OFFSET', G.cx0, G.cTop - 14, { size: 8.5, role: 'mono', color: AM.col.mist, letterSpacing: '0.1em' });
+      g.save();
+      g.strokeStyle = AM.rgba(AM.col.linen, 0.1); g.lineWidth = 1;
+      g.beginPath(); g.moveTo(G.cx0, Math.round(yOf(0)) + 0.5); g.lineTo(G.cx1, Math.round(yOf(0)) + 0.5); g.stroke();
+      g.beginPath(); g.moveTo(Math.round(xOf(0)) + 0.5, G.cTop); g.lineTo(Math.round(xOf(0)) + 0.5, G.cBot); g.stroke();
+      const fill = g.createLinearGradient(0, G.cTop, 0, G.cBot);
+      fill.addColorStop(0, AM.rgba(AM.dye.lichen, 0.22)); fill.addColorStop(1, AM.rgba(AM.dye.lichen, 0));
+      g.beginPath(); g.moveTo(xOf(-MAXP), G.cBot);
+      curve.forEach((v, k) => g.lineTo(xOf(k - MAXP), yOf(v)));
+      g.lineTo(xOf(MAXP), G.cBot); g.closePath(); g.fillStyle = fill; g.fill();
+      g.lineJoin = 'round';
+      g.beginPath(); curve.forEach((v, k) => (k ? g.lineTo(xOf(k - MAXP), yOf(v)) : g.moveTo(xOf(k - MAXP), yOf(v))));
+      g.strokeStyle = AM.rgba(AM.dye.lichen, 0.25); g.lineWidth = 5; g.stroke();
+      g.strokeStyle = AM.dye.lichen; g.lineWidth = 1.5; g.stroke();
+      g.fillStyle = AM.rgba(AM.dye.lichen, 0.85);
+      curve.forEach((v, k) => { g.beginPath(); g.arc(xOf(k - MAXP), yOf(v), 1.7, 0, TAU); g.fill(); });
+      g.restore();
+      DR.text(g, 'q·k', G.cx0 - 7, G.cTop + 4, { size: 9.5, role: 'mono', color: AM.col.mist, align: 'right' });
+      DR.text(g, '0', G.cx0 - 7, yOf(0) + 3, { size: 9, role: 'mono', color: AM.col.mist, align: 'right' });
+      DR.text(g, `−${MAXP}`, G.cx0, G.cBot + 15, { size: 9, role: 'mono', color: AM.col.mist });
+      DR.text(g, `+${MAXP}`, G.cx1, G.cBot + 15, { size: 9, role: 'mono', color: AM.col.mist, align: 'right' });
+      DR.text(g, 'offset m − n', xOf(0), G.cBot + 15, { size: 9, role: 'mono', color: AM.col.linenDim, align: 'center' });
+      // the current (m, n): computed from both positions, it lands on the offset-only curve
+      const ao = st.am - st.an, sNow = score(st.am, st.an);
+      const mx = xOf(ao), my = yOf(sNow);
+      g.save(); g.strokeStyle = AM.rgba(AM.dye.weld, 0.45); g.setLineDash([2, 3]);
+      g.beginPath(); g.moveTo(mx, G.cTop); g.lineTo(mx, G.cBot); g.stroke(); g.restore();
+      if (st.flash > 0.01) {
+        g.save(); g.strokeStyle = AM.rgba(AM.dye.weld, 0.8 * st.flash); g.lineWidth = 1.5;
+        g.beginPath(); g.arc(mx, my, 6 + 18 * (1 - st.flash), 0, TAU); g.stroke(); g.restore();
+      }
+      DR.glowDot(g, mx, my, 3.4, AM.dye.weld);
+    }
+
+    // a tap on a small dial shows that pair in the big dial
+    cv.canvas.addEventListener('pointerdown', (e) => {
+      const p = cv.pointer(e), G = geom(cv.w);
+      G.mx.forEach((x, k) => { if (Math.hypot(p.x - x, p.y - G.my[k]) < G.mr + 8) { st.pair = k; pairSeg.set(k); st.dirty = true; } });
+    });
+
+    const controls = el('div', { class: 'controls att-rope-ctrls' }, mS.el, nS.el, el('div', { class: 'att-rope-btns' }, back, fwd), pairSeg.el);
+    const fig = AM.ui.figure({
+      title: 'RoPE · one dial per pair', badge: AM.ui.badge('toy', 'Exact formula'), cls: 'att-rope-fig',
+      caption: 'Toy query and key (d<sub>k</sub> = 8, four pairs); the rotation is the exact RoPE formula with θ<sub>i</sub> = 10000<sup>−2i/8</sup>. The score is the raw dot product q·k, before the 1/√d<sub>k</sub> scale and softmax. The purple curve is computed from the offset alone, as RoPE(q, Δ)·RoPE(k, 0); the gold bead is computed from both positions and always lands on it.',
+    }, cv.wrap, controls, readout);
+
+    cv.onResize(() => { st.dirty = true; draw(); });
+    const seen = inView(cv.wrap);
+    ctx.loop((t, dt) => {
+      if (!seen.on) return;
+      const tm = approach(st.am, st.m, dt * 7), tn = approach(st.an, st.n, dt * 7);
+      const moving = Math.abs(tm - st.m) > 1e-3 || Math.abs(tn - st.n) > 1e-3;
+      st.am = moving ? tm : st.m; st.an = moving ? tn : st.n;
+      if (st.flash > 0) st.flash = Math.max(0, st.flash - dt * 1.4);
+      if (moving || st.dirty || st.flash > 0) { draw(); st.dirty = false; }
+    });
+    updateReadout();
+    return { el: fig };
+  }
+
+
+  /** The RoPE section: prose beside the dial lab. */
+  function buildRope(body, ctx) {
+    const el = ctx.el;
+    const rope = mountRope(ctx);
+    const P = (html) => el('p', { html });
+    const prose = el('div', { class: 'prose' },
+      el('h3', {}, 'Position, revisited: rotate the query and key'),
+      P('Chapter 3 added a position vector to every token before attention. Most open models today, including Llama, Mistral and Qwen, do something else, called <span class="term">rotary position embeddings</span> (RoPE; Su et al., 2021). Nothing is added to the token vectors. Inside every head, each query and key is split into pairs of numbers, and pair <span class="math">i</span> is turned by its position times <span class="math">θ<sub>i</sub> = 10000<sup>−2i/d<sub>k</sub></sup></span>, the clock speeds of chapter 3.'),
+      P('A rotation keeps lengths. Turning the query by <span class="math">m·θ<sub>i</sub></span> and the key by <span class="math">n·θ<sub>i</sub></span> changes the angle between them by <span class="math">(m − n)·θ<sub>i</sub></span>. So the score <span class="math">q·k</span> depends on the two contents and on the offset <span class="math">m − n</span>, never on <span class="math">m</span> or <span class="math">n</span> alone. Slide both together and the score holds still.'),
+      P('Position now reaches attention only as the distance between two tokens, so a head can learn a rule like “look three words back” that works anywhere in the text.'));
+    body.appendChild(el('div', { class: 'grid-2 att-rope' }, prose, rope.el));
+  }
+
+  // ====================================================================
+  // 9. Chapter CSS (every selector scoped to #ch-attention)
   // ====================================================================
   const CSS = `
     #ch-attention .att-intro { margin-bottom: calc(-1 * var(--space-5)); }
@@ -1930,8 +2289,24 @@
 
     #ch-attention .att-why { align-items: center; }
     #ch-attention .att-nocase { text-transform: none; letter-spacing: 0.02em; }
-    #ch-attention .fig-title sub, #ch-attention .toggle sub, #ch-attention .ctl-label sub { font-size: 0.8em; line-height: 0; }
+    #ch-attention .fig-title sub, #ch-attention .toggle sub, #ch-attention .ctl-label sub, #ch-attention .mx-head sub { font-size: 0.8em; line-height: 0; }
     #ch-attention .att-outbars { width: 120px; height: 34px; }
     #ch-attention .att-why canvas { border-radius: var(--radius); background: var(--ink-2); border: 1px solid var(--rule); }
+
+    #ch-attention .att-rope { align-items: start; }
+    #ch-attention .att-rope .prose { padding-top: var(--space-2); }
+    #ch-attention .att-rope .prose > * { min-width: 0; }
+    #ch-attention .att-rope-readout { margin: 0; font-family: var(--font-mono); font-size: 11.5px; line-height: 1.7; color: var(--linen-dim); min-height: 3.4em; font-variant-numeric: tabular-nums; }
+    #ch-attention .att-rope-readout b { color: var(--weld); font-weight: 500; }
+    #ch-attention .att-dim { color: var(--mist); }
+    #ch-attention .att-rope-ctrls { gap: var(--space-4) var(--space-5); align-items: end; }
+    #ch-attention .att-rope-ctrls .ctl-range { width: min(220px, 100%); }
+    #ch-attention .att-rope-btns { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+    #ch-attention .att-lc .ctl-label { text-transform: none; letter-spacing: 0.06em; }
+    @media (max-width: 520px) {
+      #ch-attention .att-rope-ctrls { gap: var(--space-4); }
+      #ch-attention .att-rope-ctrls .ctl-range { width: 100%; }
+      #ch-attention .att-rope-readout { font-size: 10.5px; }
+    }
   `;
 })();

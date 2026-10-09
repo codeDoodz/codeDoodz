@@ -6,7 +6,8 @@
                                           for hosts that wrap the page in their own skeleton)
 
    Inlines every local <link rel="stylesheet"> and <script src>, keeps remote
-   stylesheet links (Google Fonts). */
+   stylesheet links (Google Fonts, loaded with media="print" + onload so they never
+   block rendering). The fragment build has no <html lang>; AM.boot sets it. */
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,7 +43,9 @@ if (fragment) {
   const links = head.match(/<link[^>]+>/g) || [];
   const styles = head.match(/<style>[\s\S]*?<\/style>/g) || [];
   const body = (html.match(/<body[^>]*>([\s\S]*)<\/body>/) || ['', html])[1];
-  html = [title, ...links.filter((l) => !/preconnect/.test(l)), ...styles, body.trim()].join('\n');
+  // Inlined styles first: the host must paint the indigo ground even while the
+  // (non-blocking) font stylesheet is still on its way.
+  html = [title, ...styles, ...links.filter((l) => !/preconnect/.test(l)), body.trim()].join('\n');
 }
 
 const outDir = path.join(root, 'dist');

@@ -52,6 +52,8 @@
     const k = toks.slice(0, j + 1).filter((t) => t === toks[j]).length;
     return `${toks[j]} (${ORD[k - 1] || k + 'th'})`;
   };
+  /** Speaker with a cross: the phone-sized mute control. */
+  const MUTE_ICON = '<svg viewBox="0 0 16 16" width="13" height="13"><path d="M2 6h2.6L8.4 3v10L4.6 10H2z" fill="currentColor"/><path d="M10.6 6.1l3.8 3.8M14.4 6.1l-3.8 3.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg>';
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   /** Cubic control points for a thread arching upward from x1 to x2 at height y; a loop when x1 ≈ x2. */
@@ -425,6 +427,7 @@
     #ch-${ID} .step .math.block { font-size: 0.86em; padding: 8px 10px; }
     #ch-${ID} .step em { color: var(--linen); }
     #ch-${ID} .hd-nw { white-space: nowrap; }
+    #ch-${ID} .hd-nocase { text-transform: none; letter-spacing: 0.02em; }
     #ch-${ID} sub, #ch-${ID} sup { line-height: 0; }
 
     #ch-${ID} .hd-sec { display: grid; gap: var(--space-5); }
@@ -474,6 +477,8 @@
       position: absolute; top: 9px; right: 9px; z-index: 1; border: 1px solid var(--rule-strong); background: color-mix(in srgb, var(--ink) 85%, transparent);
       color: var(--mist); border-radius: 999px; padding: 1px 7px 2px; font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer;
     }
+    #ch-${ID} .hd-mute-ic { display: none; }
+    #ch-${ID} .hd-mute-ic svg { display: block; }
     #ch-${ID} .hd-mute:hover { color: var(--linen); border-color: var(--linen-dim); }
     #ch-${ID} .hd-mute[aria-pressed='true'] { color: var(--ink); background: var(--madder); border-color: var(--madder); font-weight: 600; }
     #ch-${ID} .hd-cell.is-muted .hd-pick { border-style: dashed; }
@@ -524,7 +529,10 @@
       #ch-${ID} .hd-pname { font-size: 9.5px; }
       #ch-${ID} .hd-chip { font-size: 10px; padding: 4px 9px; letter-spacing: 0.03em; }
       #ch-${ID} .hd-pev { font-size: 8.5px; }
-      #ch-${ID} .hd-mute { top: 6px; right: 6px; padding: 0 5px 1px; font-size: 7.5px; }
+      #ch-${ID} .hd-mute { top: 3px; right: 3px; width: 24px; height: 24px; padding: 0; display: grid; place-items: center; border-radius: 50%; }
+      #ch-${ID} .hd-mute-ic { display: block; }
+      #ch-${ID} .hd-mute-tx { display: none; }
+      #ch-${ID} .hd-pev-w { display: none; }
       #ch-${ID} .hd-vgroup b { min-width: 100%; }
       #ch-${ID} .hd-bar { grid-template-columns: 4.6em minmax(0, 1fr) 3.2em; font-size: 12.5px; }
     }
@@ -890,7 +898,7 @@
           g.restore();
           const os = Lo.outStrip;
           strip(g, os.x, os.y, os.w, os.h, S.write, { color: AM.dye.weld, neg: AM.dye.madder, alpha: al });
-          haloText(g, `after W_O · ${S.d}`, os.x + os.w, os.y - (phone ? 7 : 9), { size: phone ? 7.5 : 9, align: 'right', color: AM.dye.weld, alpha: al, halo: false });
+          haloText(g, `after W_O · ${S.d}`, os.x + os.w, os.y - (phone ? 7 : 9), { size: phone ? 8 : 9, align: 'right', color: AM.dye.weld, alpha: al, halo: false });
         }
       }
 
@@ -968,6 +976,28 @@
       });
     }
 
+    // W_Q as cloth: 64 × 64 cells that never change. They are painted once per size into
+    // their own layer; each frame only draws that layer (faded, rows revealed by a clip).
+    let costLayer = null, costKey = '';
+    function renderCost(size, cell) {
+      const key = `${size}|${cv.dpr}`;
+      if (costLayer && costKey === key) return;
+      costKey = key;
+      costLayer = costLayer || document.createElement('canvas');
+      costLayer.width = costLayer.height = Math.max(1, Math.round(size * cv.dpr));
+      const o = costLayer.getContext('2d');
+      o.setTransform(cv.dpr, 0, 0, cv.dpr, 0, 0);
+      const n = S.d, dh = S.dh, gap = cell > 4 ? 0.8 : 0.3;
+      for (let i = 0; i < n; i++) {
+        for (let j = 0; j < n; j++) {
+          const hh = Math.floor(j / dh);
+          const v = S.WQ ? S.WQ[i][j] : 0;
+          const mm = Math.min(1, Math.abs(v) / wqMax);
+          o.fillStyle = v >= 0 ? AM.rgba(hc(hh), 0.08 + 0.92 * Math.pow(mm, 0.8)) : AM.mix(AM.col.ink, hc(hh), 0.06 + 0.32 * Math.pow(mm, 0.8));
+          o.fillRect(j * cell, i * cell, Math.max(1, cell - gap), Math.max(1, cell - gap));
+        }
+      }
+    }
     function drawCost(c) {
       const { loomX0, loomX1, laneTop, laneBot, phone } = Lo;
       const n = S.d, dh = S.dh;
@@ -989,28 +1019,25 @@
       g.fillStyle = AM.rgba(AM.col.ink, 0.95); g.fill();
       g.strokeStyle = AM.rgba(AM.col.linen, 0.1); g.lineWidth = 1; g.stroke();
       const rows = Math.floor(clamp(c * 1.15) * n + 0.0001);
-      const gap = cell > 4 ? 0.8 : 0.3;
-      for (let i = 0; i < rows; i++) {
-        for (let j = 0; j < n; j++) {
-          const hh = Math.floor(j / dh);
-          const v = S.WQ ? S.WQ[i][j] : 0;
-          const mm = Math.min(1, Math.abs(v) / wqMax);
-          g.fillStyle = v >= 0 ? AM.rgba(hc(hh), 0.08 + 0.92 * Math.pow(mm, 0.8)) : AM.mix(AM.col.ink, hc(hh), 0.06 + 0.32 * Math.pow(mm, 0.8));
-          g.fillRect(gx + j * cell, gy + i * cell, Math.max(1, cell - gap), Math.max(1, cell - gap));
-        }
+      if (rows > 0 && size > 0) {
+        renderCost(size, cell);
+        g.save();
+        g.beginPath(); g.rect(gx, gy, size, rows * cell); g.clip();
+        g.drawImage(costLayer, gx, gy, size, size);
+        g.restore();
       }
       for (let hh = 0; hh < S.H; hh++) {
         const x = gx + hh * dh * cell;
         if (hh > 0) { g.strokeStyle = AM.col.ink; g.lineWidth = 2; g.beginPath(); g.moveTo(x, gy - 4); g.lineTo(x, gy + size + 4); g.stroke(); }
         haloText(g, phone ? `h${hh}` : `head ${hh}`, x + dh * cell / 2, gy - (phone ? 10 : 13), { size: phone ? 8 : 9.5, color: hc(hh), halo: false });
-        haloText(g, '16', x + dh * cell / 2, gy + size + (phone ? 8 : 10), { size: phone ? 7 : 8, color: hc(hh), halo: false, alpha: 0.85 });
+        haloText(g, '16', x + dh * cell / 2, gy + size + (phone ? 8 : 10), { size: phone ? 8 : 8.5, color: hc(hh), halo: false, alpha: 0.85 });
       }
       g.restore();
       g.save();
       g.globalAlpha = clamp(c * 2 - 0.6);
       g.translate(gx - (phone ? 10 : 14), gy + size / 2);
       g.rotate(-Math.PI / 2);
-      haloText(g, phone ? 'reads all 64 of x' : 'rows: all 64 numbers of x', 0, 0, { size: phone ? 7.5 : 9, color: AM.col.mist, halo: false });
+      haloText(g, phone ? 'reads all 64 of x' : 'rows: all 64 numbers of x', 0, 0, { size: phone ? 8 : 9, color: AM.col.mist, halo: false });
       g.restore();
       haloText(g, `W_Q: 64 × 64 = 4 × (64 × 16)`, gx + size / 2, gy + size + (phone ? 22 : 28), { size: phone ? 9 : 11, color: AM.col.linen, alpha: clamp(c * 2 - 0.8), halo: false });
     }
@@ -1107,13 +1134,16 @@
         const name = el('span', { class: 'hd-pname' }, titleName(l, h));
         const ev = el('span', { class: 'hd-pev' }, '');
         pick.append(name, ev);
-        let muteBtn = null;
+        let muteBtn = null, muteTx = null;
         if (S.canMute) {
-          muteBtn = el('button', { type: 'button', class: 'hd-mute', id: `hd-mute-${l}-${h}`, 'aria-pressed': 'false', title: `Mute layer ${l} head ${h}`, 'aria-label': `Mute layer ${l} head ${h}`, onclick: () => toggleMute(l, h) }, 'mute');
+          // a word on wide screens; on phones a 24px speaker-off icon (the label stays for screen readers)
+          muteTx = el('span', { class: 'hd-mute-tx' }, 'mute');
+          muteBtn = el('button', { type: 'button', class: 'hd-mute', id: `hd-mute-${l}-${h}`, 'aria-pressed': 'false', title: `Mute layer ${l} head ${h}`, 'aria-label': `Mute layer ${l} head ${h}`, onclick: () => toggleMute(l, h) },
+            el('span', { class: 'hd-mute-ic', 'aria-hidden': 'true', html: MUTE_ICON }), muteTx);
           cell.appendChild(muteBtn);
         }
         cellsBox.appendChild(cell);
-        const c = { l, h, pick, cell, cvs, name, ev, muteBtn };
+        const c = { l, h, pick, cell, cvs, name, ev, muteBtn, muteTx };
         cvs.onResize(() => drawCell(c));
         cells.push(c);
       }
@@ -1372,15 +1402,16 @@
         const jb = topKey(row, qf);
         const isM = S.mute.has(c.l * NH + c.h);
         c.cell.classList.toggle('is-muted', isM);
-        c.ev.textContent = isM ? 'muted' : `${f2(row[jb])} ${tokTiny(S.toks, jb)}`;
+        // phones show the weight alone (the word is in the panel below); wider tiles add the word
+        c.ev.innerHTML = isM ? 'muted' : `${f2(row[jb])}<span class="hd-pev-w"> ${esc(tokTiny(S.toks, jb))}</span>`;
         c.pick.setAttribute('aria-label', `Layer ${c.l} head ${c.h}, ${headName(c.l, c.h)}: at “${tokName(S.toks, qf)}” it looks most at “${tokName(S.toks, jb)}” (${f2(row[jb])})${isM ? ', muted' : ''}`);
-        if (c.muteBtn) { c.muteBtn.setAttribute('aria-pressed', String(isM)); c.muteBtn.textContent = isM ? 'muted' : 'mute'; }
+        if (c.muteBtn) { c.muteBtn.setAttribute('aria-pressed', String(isM)); c.muteTx.textContent = isM ? 'muted' : 'mute'; }
         drawCell(c);
       }
       // header
       loom.style.setProperty('--hc', hc(hh));
       hName.textContent = titleName(l, hh);
-      hId.textContent = `Layer ${l} · head ${hh} · d_head = ${m.config.d_model / NH}`;
+      hId.innerHTML = `Layer ${l} · head ${hh} · <span class="hd-nocase">d<sub>head</sub></span> = ${m.config.d_model / NH}`;
       role.textContent = HEADS[key].role;
       if (loomMute) {
         const isM = S.mute.has(l * NH + hh);
@@ -1391,10 +1422,10 @@
       const row = S.res.attn[l][hh][qf];
       const ranked = M.range(qf + 1).sort((a, b) => row[b] - row[a]);
       const top2 = ranked.slice(0, 2).filter((j, k) => k === 0 || row[j] >= 0.05);
-      const live = top2.map((j) => `<b>${f2(row[j])}</b> → ${esc(q(tokName(S.toks, j)))}`).join(' · ');
+      const live = top2.map((j) => `<b>${f2(row[j])}</b> → ${esc(q(tokTiny(S.toks, j)))}`).join(' · ');
       const sinkNote = ranked[0] === 0 && qf > 0 && S.toks[0] === 'the' ? ' <span class="dim">(the first word: a common resting place)</span>' : '';
       const ho = heldOut(m, l, hh);
-      facts.innerHTML = `<span class="lab">at ${esc(q(tokName(S.toks, qf)))}</span><span>${live}${sinkNote}</span>` +
+      facts.innerHTML = `<span class="lab">at ${esc(q(tokTiny(S.toks, qf)))}</span><span>${live}${sinkNote}</span>` +
         (ho ? `<span class="lab">test set</span><span>${esc(ho[0])}: <b>${f2(ho[1])}</b> <span class="dim">(mean over ${esc(ho[2])})</span></span>` : '<span class="lab">test set</span><span class="dim">no single job stands out in our measurements</span>');
       // muting
       if (S.canMute) {
@@ -1409,7 +1440,7 @@
       const top = m.topk(P, 4);
       const nextTok = qf + 1 < S.toks.length ? S.toks[qf + 1] : null;
       pred.replaceChildren(...[
-        el('div', { class: 'hd-pred-title', html: `Model’s next word after <b>${esc(q(tokName(S.toks, qf)))}</b>${S.mute.size ? ' · <span style="color:var(--madder)">with muted heads</span>' : ''}${nextTok ? ` · actual: <b>${esc(nextTok)}</b>` : ''}` }),
+        el('div', { class: 'hd-pred-title', html: `Model’s next word after <b>${esc(q(tokTiny(S.toks, qf)))}</b>${S.mute.size ? ' · <span style="color:var(--madder)">with muted heads</span>' : ''}${nextTok ? ` · actual: <b>${esc(nextTok)}</b>` : ''}` }),
         ...top.map((t, k) => {
           const bar = el('div', { class: 'hd-bar' + (k === 0 ? ' is-top' : '') },
             el('span', { class: 'w' }, t.token),
@@ -1596,9 +1627,24 @@
       }
       if (!queue.length && onDone) { onDone(rows); onDone = null; }
     }
+    /** Run queued forward passes until `ms` milliseconds of this frame are used up. */
+    function workFor(ms) {
+      const t0 = performance.now();
+      while (queue.length && performance.now() - t0 < ms) work(1);
+    }
+    // Once the findings below are on screen their numbers are wanted now, and with reduced
+    // motion the loop only ticks twice a second: then the rest of the queue is drained in
+    // ~8 ms slices between tasks (setTimeout 0), so scrolling never waits on one long block.
+    let pumping = false;
+    function pump() {
+      if (pumping || !queue.length) return;
+      pumping = true;
+      const slice = () => { workFor(8); st.dirty = true; if (queue.length) setTimeout(slice, 0); else pumping = false; };
+      setTimeout(slice, 0);
+    }
     ctx.loop(() => {
+      if (queue.length && st.vis.on) { if (AM.reducedMotion) pump(); else workFor(6); }
       if (!st.vis.on) return;
-      if (queue.length) work(AM.reducedMotion ? 20 : 4);
       const t = now();
       // keep drawing while knots are still being tied, then only on interaction
       if (queue.length || t - lastBorn() < 0.5 || st.dirty) { draw(); st.dirty = false; }
@@ -1629,7 +1675,7 @@
       if (mv) { e.preventDefault(); st.cursor = { r: clamp(c.r + mv[0], 0, rows.length - 1), k: clamp(c.k + mv[1], 0, K - 1) }; cap.textContent = describe(st.cursor); st.dirty = true; }
       else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(c.r, Math.floor(c.k / NH), c.k % NH); }
     });
-    return { rows, finish: () => { if (queue.length) { work(queue.length); draw(); } } };
+    return { rows, hurry: pump };
   }
 
   // ====================================================================
@@ -1670,6 +1716,7 @@
         } catch (e) { eng = null; }
       }
       const C = m.config, dh = C.d_model / C.n_head;
+      const nWords = m.vocab.filter((v) => !v.startsWith('<') && /\w/.test(v)).length;
       const S = stageData(m, eng);
       const dyeSpan = (h, txt) => `<span class="dye-${hdye(h)}">${txt}</span>`;
       const best = (h) => { let jb = 0; for (let j = 1; j <= S.t; j++) if (S.attn[h][j] > S.attn[h][jb]) jb = j; return jb; };
@@ -1679,7 +1726,7 @@
         const jb = best(h), wv = S.attn[h][jb];
         if (wv < 0.3) return `${dyeSpan(h, `head ${h}`)} spreads thin (its strongest thread is ${f2(wv)})`;
         if (jb === S.t) return `${dyeSpan(h, `head ${h}`)} looks hardest at “${S.toks[jb]}” itself (${f2(wv)})`;
-        return `${dyeSpan(h, `head ${h}`)} looks hardest at “${tokName(S.toks, jb)}” (${f2(wv)})`;
+        return `${dyeSpan(h, `head ${h}`)} looks hardest at “${tokTiny(S.toks, jb)}” (${f2(wv)})`;
       };
       const others = M.range(S.H).filter((h) => h !== hStar).map(describe);
       const othersTxt = others.slice(0, -1).join(', ') + ' and ' + others[others.length - 1];
@@ -1690,11 +1737,15 @@
         writeTxt = ` Here ${dyeSpan(hw, `head ${hw}`)} writes the biggest change: its share of the output is ${(sorted[0] / sorted[1]).toFixed(1)} times as long as the next head’s.`;
       }
       const predTxt = `${S.pred[0].token}</strong> (${pct(S.pred[0].p)})`;
+      // repeated words carry a subscript, here and on the canvases: the₁ is the first “the”
+      const repTok = S.toks.find((t, i) => S.toks.indexOf(t) !== i);
+      const repGloss = repTok ? ` (Subscripts tell repeated words apart: ${repTok}₁ is the first “${repTok}”.)` : '';
 
       // ------------------------------------------------ intro
       body.appendChild(el('div', { class: 'prose hd-intro' },
         el('p', { html: 'The head in chapter 4 had one job: it sent “it” looking for its creature. But at every position a sentence needs several jobs done at once. Before the model can write the word after <strong>“because”</strong>, it has to know who the subject is and whether there is one of them or many.' }),
-        el('p', { html: `So each layer runs several <span class="term">attention heads</span> in parallel. The tiny model that ships with this page has ${C.n_head} heads in each of its ${C.n_layer} layers, and every number from here on comes from it: the patterns and predictions are computed live in your browser.` }),
+        el('p', { html: `So each layer runs several <span class="term">attention heads</span> in parallel. From here on we watch a real model do it: the tiny transformer that ships with this page, which we call <strong>tinyworld</strong>. It has ${C.n_head} heads in each of its ${C.n_layer} layers. It was trained from scratch on generated sentences of toy English, ${nWords} words in all.` }),
+        el('p', { html: 'Each training sentence plants one puzzle: a pronoun to resolve (<em>the queen … because</em> → she), a verb to agree with its noun (<em>the keys near the old door</em> → are), a colour to recall, a name or phrase to copy (a parrot repeats what someone said), or a fact to remember (<em>the capital of japan is</em> → tokyo). Every number in this chapter comes from it, computed live in your browser.' }),
       ));
 
       // ------------------------------------------------ the prism (scrollytelling)
@@ -1708,7 +1759,7 @@
       if (stTitle) stTitle.innerHTML = 'The prism · layer 0<span class="hd-long"> · four heads</span>';
       stage.appendChild(stageFig);
       const prism = buildPrism(ctx, stageFig, S);
-      stageFig.appendChild(el('figcaption', { class: 'hd-stage-cap', html: `Live model: every strip, thread and weight is read from one forward pass of “${STAGE_TEXT}”. Strips show vectors as bars (up = positive). The prism stands for the projections; real heads also add biases and read a LayerNorm’d copy of x.` }));
+      stageFig.appendChild(el('figcaption', { class: 'hd-stage-cap', html: `Live model: every strip, thread and weight is read from one forward pass of “${STAGE_TEXT}”. Strips show vectors as bars (up = positive). The prism stands for the projections. The real heads also add a bias, and they read a normalised copy of x (chapter 7).` }));
 
       const s = (k) => `<span class="math">${k}</span>`;
       const STEPS = [
@@ -1724,14 +1775,14 @@
           html: [
             `A multi-head layer sends the vector through a prism instead. Here there are n<sub>head</sub> = ${C.n_head} heads, and each has its own W<sub>Q</sub>, W<sub>K</sub> and W<sub>V</sub> of size ${C.d_model} × ${dh}. Each head reads all ${C.d_model} numbers and makes a query, a key and a value of just`,
             `<span class="math block">d<sub>head</sub> = d<sub>model</sub> / n<sub>head</sub> = ${C.d_model} / ${C.n_head} = ${dh}</span>`,
-            `The four coloured strips are the four real queries of “because”, ${dh} numbers each. In code this is one ${C.d_model} × ${C.d_model} matrix whose output is cut into four slices.`,
+            `This d<sub>head</sub> is the d<sub>k</sub> of chapter 4. The four coloured strips are the four real queries of “because”, ${dh} numbers each. In code this is one ${C.d_model} × ${C.d_model} matrix whose output is cut into four slices.`,
           ],
         },
         {
           label: '3 · Four questions at once',
           html: [
             `Each head now runs chapter 4’s recipe on its own: scores ${s(`q·k / √${dh}`)}, the causal mask, softmax. Same sentence, four different patterns of threads.`,
-            `${dyeSpan(hStar, `Head ${hStar}`)} puts <strong>${f2(S.attn[hStar][jStar])}</strong> of its attention on “${tokName(S.toks, jStar)}”, the word a pronoun after “because” will need. Meanwhile ${othersTxt}.`,
+            `${dyeSpan(hStar, `Head ${hStar}`)} puts <strong>${f2(S.attn[hStar][jStar])}</strong> of its attention on “${tokTiny(S.toks, jStar)}”, the word a pronoun after “because” will need. Meanwhile ${othersTxt}.${repGloss}`,
             `The model’s next word here is <strong>${predTxt}.`,
           ],
         },
@@ -1795,7 +1846,7 @@
         } catch (e) { console.error('[heads] facts', e); }
       }
       const mt = eng ? buildMuteTest(ctx, mtSec, m, eng, (r, l, h) => atlas.openCase(r, l, h), fillFacts) : null;
-      // L1H3 at the parrot's "said", and on a random repeated list: two cheap forward passes
+      // L1H3 at the parrot's "said", and on one repeat outside the training grammar: two cheap forward passes
       let par1 = '“red”', rand = null;
       try {
         const pid = m.encode(PRESETS[8].text).ids, pr = m.run(pid, { capture: true });
@@ -1806,20 +1857,20 @@
         const rq = rid.length - 1, rrow = rr.attn[1][3][rq];
         let rb = 0; for (let j = 1; j <= rq; j++) if (rrow[j] > rrow[rb]) rb = j;
         const top = m.topk(rr.probs[rq], 1)[0];
-        if (rr.tokens[rb] !== 'box' && top.token !== 'box') rand = { text: rt, key: tokName(rr.tokens, rb), w: f2(rrow[rb]), top: top.token, p: pct(top.p) };
+        if (rr.tokens[rb] !== 'box' && top.token !== 'box') rand = { text: rt, top: top.token, p: pct(top.p) };
       } catch (e) { /* keep the fallbacks */ }
       const findings = el('div', { class: 'hd-findings' },
         eng ? el('p', {}, `Some heads have a crisp pattern, and muting one breaks the job that pattern suggests, with smaller dents elsewhere. Without ${headName(0, 3)} (L0H3), “she” falls from `, fid('she0'), ' to ', fid('she1'), ' and the model guesses ', fid('sheG'), `. Without ${headName(1, 2)} (L1H2), “the keys near the old door” is followed by `, fid('keys'), '.')
           : el('p', {}, `Some heads have a crisp pattern: ${headName(0, 3)} (L0H3) looks from “because” to the subject a pronoun will need, and ${headName(1, 2)} (L1H2) looks back to the noun whose number the verb must match.`),
         eng ? el('p', {}, `A blurry pattern does not mean an idle head: without ${headName(0, 1)} (L0H1), the parrot’s “red” falls to `, fid('par0'), '. Some answers have backups: no single mute pushes “alice” below ', fid('copy'), '. Muting any one layer-2 head leaves every answer here ', fid('l2'), ', and even muting all four at once keeps every answer at ', fid('l2all'), ' or more. In this small model, the last layer’s attention looks nearly idle.') : null,
-        el('p', { html: 'Heads with nothing in particular to fetch seem to park their attention on the first word, and those in layers 1 and 2 do it most: the bright left column in their atlas tiles. (The top-left cell is bright in every tile, because the first word can only look at itself.) Large models do this too, and it has a name: an <span class="term">attention sink</span>.' }),
-        el('p', { html: `Studies of larger models report heads whose patterns line up with recognisable jobs: tracking the previous token, linking a verb to its object, working out which word a pronoun means. The best known are <span class="term">induction heads</span>, which find an earlier copy of the current word and attend to the word that followed it, so the model can continue a repeated pattern. L1H3 does something like this in parrot sentences: after the parrot’s “said” it looks at <span class="hd-n">${esc(par1)}</span>, the word that followed the first “said”.` +
-          (rand ? ` On the other repeats we tried, it does not carry over. In <em>${esc(rand.text)}</em> its strongest thread goes to ${esc(q(rand.key))} (${rand.w}), and the model guesses ${esc(q(rand.top))} (${rand.p}) where a repeat would need “box”.` : '') }),
+        el('p', { html: 'Heads with nothing in particular to fetch seem to park their attention on the first word, and those in layers 1 and 2 do it most: the bright left column in their atlas tiles. Large models do this too, and it has a name: an <span class="term">attention sink</span>.' }),
+        el('p', { html: `Larger models have <span class="term">induction heads</span>, which continue a repeated pattern: they find an earlier copy of the current word and attend to the word that followed it. Our L1H3 does something similar for the parrot: after the parrot’s “said” it looks at <span class="hd-n">${esc(par1)}</span>, the word that followed the first “said”.` +
+          (rand ? ` On a repeat outside its training grammar, it does not carry over: after <em>${esc(rand.text)}</em> the model guesses ${esc(q(rand.top))} (${rand.p}), not “box”.` : '') }),
         el('p', { html: 'So treat every name here as a hypothesis. A label sums up measurements, most heads mix several jobs, and it takes tests like muting to see what the model relies on.' }),
       );
       mtSec.appendChild(findings);
       if (mt && typeof IntersectionObserver !== 'undefined') {
-        const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) { mt.finish(); io.disconnect(); } });
+        const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) { mt.hurry(); io.disconnect(); } });
         io.observe(findings);
       }
 
@@ -1827,7 +1878,7 @@
       body.appendChild(el('div', { class: 'callout hd-key' },
         el('div', { class: 'callout-label' }, 'Key idea'),
         el('p', { html: `Multi-head attention runs several small attention heads in parallel. Each projects the token’s ${C.d_model} numbers down to its own ${dh}-number query, key and value, makes its own pattern and returns its own blend. ${s('Concat(o⁰…o³)·W<sub>O</sub>')} weaves the blends back into the residual stream. It costs the same as one wide head, and it lets each head specialise.` }),
-        el('p', { html: 'Attention moves information between positions. What a token then does with it happens in the next block: the MLP.' }),
+        el('p', { html: 'Attention moves information between positions. What a token then does with it happens in the other half of the layer, the MLP, in the next chapter.' }),
       ));
     },
   });

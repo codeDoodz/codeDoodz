@@ -11,7 +11,7 @@
       each part linked to the chapter that explains it. Labels switch between
       this page's model, GPT-2 small, GPT-3 and Llama 3.1 405B. The sentence
       running through it is the live tinyworld model, one token per pass.
-   3. What real models add, a recap, what the page left out, the key idea and
+   3. What real models add, what the page left out, the key idea and
       a finished cloth woven from the live model's mean attention. */
 (() => {
   const ID = 'epilogue';
@@ -96,9 +96,11 @@
     if ('letterSpacing' in g) g.letterSpacing = o.ls || '0px';
     g.globalAlpha *= o.alpha ?? 1;
     g.lineJoin = 'round';
-    g.strokeStyle = o.halo || AM.rgba(AM.col.ink, 0.88);
-    g.lineWidth = o.haloW || 4;
-    g.strokeText(str, x, y);
+    if (o.halo !== false) {
+      g.strokeStyle = o.halo || AM.rgba(AM.col.ink, 0.88);
+      g.lineWidth = o.haloW || 4;
+      g.strokeText(str, x, y);
+    }
     g.fillStyle = o.color || AM.col.linen;
     g.fillText(str, x, y);
     g.restore();
@@ -351,7 +353,7 @@
       #ch-${ID} .ep-pair { grid-template-columns: minmax(0, 1fr); }
     }
 
-    /* ---- refinements, recap, left out ---- */
+    /* ---- refinements, left out ---- */
     #ch-${ID} .ep-sechead { display: grid; gap: var(--space-3); max-width: var(--prose); }
     #ch-${ID} .ep-sechead p { color: var(--linen-dim); }
     #ch-${ID} .ep-refine { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr)); column-gap: var(--space-7); margin-top: var(--space-4); }
@@ -362,15 +364,10 @@
     #ch-${ID} .ep-ref .ep-ch { font-size: 9.5px; margin-left: 4px; white-space: nowrap; }
     #ch-${ID} .ep-lists { align-items: start; }
     #ch-${ID} .ep-lists h3 { font-family: var(--font-body); font-size: var(--fs-h3); font-weight: 600; color: var(--linen); margin-bottom: var(--space-4); }
-    #ch-${ID} .ep-threads { list-style: none; margin: 0; padding: 0 0 0 26px; position: relative; display: grid; gap: 13px; }
-    #ch-${ID} .ep-threads::before { content: ''; position: absolute; left: 7px; top: 9px; bottom: 9px; width: 2px; border-radius: 2px; background: linear-gradient(var(--weld), color-mix(in srgb, var(--weld) 35%, transparent)); box-shadow: 0 0 8px color-mix(in srgb, var(--weld) 50%, transparent); }
-    #ch-${ID} .ep-threads li { --c: var(--weld); position: relative; color: var(--linen-dim); line-height: 1.5; }
-    #ch-${ID} .ep-threads li::before { content: ''; position: absolute; left: -24px; top: 0.42em; width: 10px; height: 10px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 3px var(--ink), 0 0 12px var(--c); }
-    #ch-${ID} .ep-threads .ep-ch { margin-right: 8px; font-size: 10px; }
-    #ch-${ID} .ep-left { list-style: none; margin: 0; padding: 0; display: grid; gap: 11px; }
+    #ch-${ID} .ep-left { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr)); gap: 11px var(--space-7); }
     #ch-${ID} .ep-left li { position: relative; padding-left: 26px; color: var(--linen-dim); line-height: 1.5; }
     #ch-${ID} .ep-left li::before { content: ''; position: absolute; left: 1px; top: 0.72em; width: 14px; height: 2px; border-radius: 2px; background: linear-gradient(90deg, var(--mist), transparent); }
-    #ch-${ID} .ep-left li strong, #ch-${ID} .ep-threads li strong { color: var(--linen); font-weight: 600; }
+    #ch-${ID} .ep-left li strong { color: var(--linen); font-weight: 600; }
 
     /* ---- key idea + coda ---- */
     #ch-${ID} .ep-chain { display: flex; flex-wrap: wrap; align-items: center; gap: 7px 7px; font-family: var(--font-mono); font-size: 11px; color: var(--mist); margin-block: 4px; }
@@ -467,7 +464,7 @@
       {
         key: 'ours', label: '1 · This page’s loom',
         html: [
-          `Most of this page’s live figures came from one small transformer: <strong>${fmtInt(Po)} parameters</strong> in ${ours.L} layers, with d<sub>model</sub> = ${ours.d}, a ${ours.V}-word vocabulary and a ${ours.T}-token context. It trained on about 30 million tokens of toy English (a 12-million-token corpus, read about two and a half times), in 25 minutes on four CPU cores.`,
+          `Most of this page’s live figures came from one small transformer: <strong>${fmtInt(Po)} parameters</strong> in ${ours.L} layers, with d<sub>model</sub> = ${ours.d}, a ${ours.V}-token vocabulary (134 words, the full stop and comma, and two special tokens) and a ${ours.T}-token context. It trained on about 30 million tokens of toy English (a 12-million-token corpus, read about two and a half times), in 25 minutes on four CPU cores.`,
           `On the stage it is a square of cloth whose area is its parameter count. The stripes are where those parameters sit, in order: the <span class="dye-saffron">word table</span>, the <span class="dye-lichen">position table</span>, one <span class="dye-woad">attention</span> and one <span class="dye-verdigris">MLP</span> stripe per layer, then the <span class="dye-cochineal">unembedding</span>.`,
           `If every parameter were a 1 mm stitch, this cloth would be ${stitch(Po)} across. About the size of a cushion cover.`,
         ],
@@ -491,7 +488,7 @@
         key: 'frontier', label: '4 · Today’s frontier',
         html: [
           `Most of today’s largest models do not publish their sizes. Public estimates run from hundreds of billions to several trillion parameters, with contexts of hundreds of thousands to millions of tokens, trained on trillions of tokens. The haze marks that range of guesses.`,
-          `Some open-weight models do publish. DeepSeek-V3 (December 2024) has <strong>671 billion</strong> parameters and is a <span class="term">mixture of experts</span>: a router sends each token through a few of many expert MLPs, so only <strong>37 billion</strong> parameters work on any one token. The glowing patches add up to 37/671 of its cloth; which experts light up changes from token to token.`,
+          `Some open-weight models do publish. DeepSeek-V3 (December 2024) has <strong>671 billion</strong> parameters and is a <span class="term">mixture of experts</span>: a router sends each token through a few of many expert MLPs, so only <strong>37 billion</strong> parameters work on any one token. The glowing patches add up to 37/671 of its cloth, the share each token uses (its attention and shared parts included); which routed experts light up changes from token to token.`,
         ],
       },
       {
@@ -610,7 +607,8 @@
       g.globalAlpha = 1;
     }
 
-    // ---- MoE patches: a 12×12 grid, 8 lit at once, each 37/671/8 of the cloth's area
+    // ---- MoE patches: a 12×12 grid, 8 lit at once, each 37/671/8 of the cloth's area. Together they stand for
+    //      everything one token uses (attention, shared expert and dense layers too), as step 4 says.
     const PN = 12, PON = 8, PSIDE = Math.sqrt(DSV3.active / DSV3.P / PON);
     // GPT-3's cloth covers the bottom-left √(175/671) ≈ 0.51 of DeepSeek-V3's side, so experts
     // light up only in cells that stay visible (otherwise fewer than 8 would show).
@@ -875,24 +873,32 @@
     function drawWeaveLabel(g, L, lv, fade) {
       if (fade < 0.02) return;
       const n = lv.u > 0.22 ? lv.n : lv.n + 1;
-      const y = L.phone ? 17 : 22;
-      g.save();
-      g.globalAlpha = fade;
+      const y = L.phone ? 19 : 24;
       const sq = L.phone ? 8 : 9;
-      g.fillStyle = AM.mix(AM.col.ink2, AM.col.linen, 0.25);
-      g.fillRect(L.ax, y - sq / 2, sq, sq);
-      g.strokeStyle = AM.rgba(AM.col.linen, 0.6);
-      g.strokeRect(L.ax + 0.5, y - sq / 2 + 0.5, sq - 1, sq - 1);
-      g.restore();
-      if (st.lastN != null && n !== st.lastN && !AM.reducedMotion) st.nFlash = 1;
-      st.lastN = n;
       const fs = L.phone ? 9.5 : 10.5;
       const a = '1 woven cell ≈ ', b = powWords(Math.max(0, n)), c = ' parameters';
       g.save();
       g.font = AM.font(fs, 'mono');
-      const wa = g.measureText(a).width, wb = g.measureText(b).width;
+      const wa = g.measureText(a).width, wb = g.measureText(b).width, wc = g.measureText(c).width;
       g.restore();
-      const x0 = L.ax + sq + 8;
+      const x0 = L.ax + 8 + sq + 8;
+      g.save();
+      g.globalAlpha = fade;
+      // a solid ink pill, so the legend reads cleanly over the striped cloth
+      const pillH = Math.round(fs * 2.1);
+      D.roundRect(g, L.ax, y - pillH / 2, x0 + wa + wb + wc + 10 - L.ax, pillH, pillH / 2);
+      g.fillStyle = AM.rgba(AM.col.ink, 0.92);
+      g.fill();
+      g.strokeStyle = AM.rgba(AM.col.linen, 0.14);
+      g.lineWidth = 1;
+      g.stroke();
+      g.fillStyle = AM.mix(AM.col.ink2, AM.col.linen, 0.25);
+      g.fillRect(L.ax + 8, y - sq / 2, sq, sq);
+      g.strokeStyle = AM.rgba(AM.col.linen, 0.6);
+      g.strokeRect(L.ax + 8.5, y - sq / 2 + 0.5, sq - 1, sq - 1);
+      g.restore();
+      if (st.lastN != null && n !== st.lastN && !AM.reducedMotion) st.nFlash = 1;
+      st.lastN = n;
       if (st.nFlash > 0.01) {
         g.save();
         g.globalAlpha = fade * st.nFlash * 0.5;
@@ -903,9 +909,9 @@
         g.fill();
         g.restore();
       }
-      halo(g, a, x0, y, { size: fs, color: AM.col.linenDim, alpha: fade });
-      halo(g, b, x0 + wa, y, { size: fs, color: AM.dye.weld, alpha: fade });
-      halo(g, c, x0 + wa + wb, y, { size: fs, color: AM.col.linenDim, alpha: fade });
+      halo(g, a, x0, y, { size: fs, color: AM.col.linenDim, alpha: fade, halo: false });
+      halo(g, b, x0 + wa, y, { size: fs, color: AM.dye.weld, alpha: fade, halo: false });
+      halo(g, c, x0 + wa + wb, y, { size: fs, color: AM.col.linenDim, alpha: fade, halo: false });
     }
 
     function axisX(L, lg) { const x0 = L.ax + 4, x1 = L.w - L.padR - 4; return x0 + (lg - AX_MIN) / (AX_MAX - AX_MIN) * (x1 - x0); }
@@ -1064,7 +1070,7 @@
     function cardHTML(key) {
       if (key === 'ours') {
         return `<div class="ep-zc-name">This page<span>tinyworld</span></div><div class="ep-zc-big">${fmtInt(Po)}</div><div class="ep-zc-unit">parameters</div><div class="ep-zc-rows">`
-          + crow('layers · heads', `${ours.L} · ${ours.H}`) + crow('d_model', ours.d) + crow('vocabulary', `${ours.V} words`) + crow('context', `${ours.T} tokens`)
+          + crow('layers · heads', `${ours.L} · ${ours.H}`) + crow('d_model', ours.d) + crow('vocabulary', `${ours.V} tokens`) + crow('context', `${ours.T} tokens`)
           + crow('data', '≈ 30M tokens') + crow('1 mm stitches', stitch(Po)) + '</div>';
       }
       if (key === 'gpt2') {
@@ -1271,7 +1277,7 @@
       ? el('div', { class: 'ep-samp' }, bars, el('div', { class: 'ep-next' }, nextWord, nextLab))
       : el('div', { class: 'ep-box-meta' }, el('span', {}, 'probabilities → one token drawn'))], ['predict']);
     // training
-    addRow('train', [head('Training loss'), el('div', { class: 'ep-box-meta', html: '<b>−log p(the real next token)</b>' })], ['train', 'lab'], { cls: 'is-gap-lg' });
+    addRow('train', [head('Training loss'), el('div', { class: 'ep-box-meta', html: '<b>−ln p(the real next token)</b>' })], ['train', 'lab'], { cls: 'is-gap-lg' });
 
     // one live, verified head behaviour for the attention note (name from AM_NOTES when present)
     let headW = null;
@@ -1295,7 +1301,7 @@
       const perL = (n) => `${fmtP(n)} × ${s.L}`;
       const changed = [];
       const set = (node, html) => { if (node.innerHTML !== html) { node.innerHTML = html; changed.push(node); } };
-      set(tokMeta, m(isOurs ? `vocabulary ${s.V} words` : `vocabulary ${fmtInt(s.V)} tokens`, `context ${fmtInt(s.T)}`));
+      set(tokMeta, m(`vocabulary ${fmtInt(s.V)} tokens`, `context ${fmtInt(s.T)}`));
       set(embMeta, m(`${fmtInt(s.V)} × ${fmtInt(s.d)}`, fmtP(c.embed)));
       posTitle.textContent = rope ? 'Position' : '+ Position';
       posTag.hidden = !rope;
@@ -1314,16 +1320,16 @@
       // notes
       const R = rows;
       set(R.tokens.text, isOurs
-        ? `Text is cut into tokens, and each becomes an integer id. This model reads whole words from a list of ${s.V}; up to ${s.T} fit in its context.`
-        : `Text is cut into tokens, and each becomes an integer id: ${fmtInt(s.V)} subword pieces, up to ${fmtInt(s.T)} at a time.`);
-      set(R.embed.text, `Each id picks one row of a learned table: a vector of d<sub>model</sub> = ${fmtInt(s.d)} numbers. ` + (rope
+        ? `Text is cut into tokens, and each becomes an integer ID. This model has ${s.V} tokens: 134 whole words, the full stop and comma, and two special tokens. Up to ${s.T} fit in its context.`
+        : `Text is cut into tokens, and each becomes an integer ID: ${fmtInt(s.V)} subword pieces, up to ${fmtInt(s.T)} at a time.`);
+      set(R.embed.text, `Each ID picks one row of a learned table: a vector of d<sub>model</sub> = ${fmtInt(s.d)} numbers. ` + (rope
         ? 'There is no position table. RoPE rotates each query and key by its position, inside attention.'
         : 'A learned position vector is added, so the model knows the order.'));
       set(R.attn.text, `The only step where tokens read from one another: <span class="math">softmax(QK<sup>T</sup>/√d<sub>k</sub> + M)·V</span>, in ${s.H} heads at once.` + (gqa ? ` Here the ${s.H} query heads share ${s.kvH} key/value heads.` : '') + (isOurs ? headLine : ` <span class="ep-more">Its ${normName} comes first.</span>`));
       const mr = c.mlp / c.attn;
       set(R.mlp.text, `Each token on its own: widen from ${fmtInt(s.d)} to ${fmtInt(s.F)} numbers, apply ${swi ? 'a Swish-gated product' : 'GELU'}, project back. ` + `<span class="ep-more">It holds ${Math.abs(mr - 2) < 0.06 ? 'about twice' : fix(mr, 1) + ' times'} the attention’s parameters.</span>`);
       set(R.block.text, `The gold thread is the <strong>residual stream</strong>, ${fmtInt(s.d)} numbers per token. Each sublayer reads it and adds its result back. The block repeats ${s.L} times, each layer building on the last.`);
-      set(R.out.text, `A final ${normName}, then one score (logit) for every entry in the vocabulary, ${fmtInt(s.V)} of them.` + (tied ? (key === 'gpt3' ? ' We assume it reuses its word table for this, as GPT-2 does; its paper says it keeps GPT-2’s design.' : ' This model reuses its word table to do it.') : ''));
+      set(R.out.text, `A final ${normName}, then one score (logit) for every entry in the vocabulary, ${fmtInt(s.V)} of them.` + (tied ? (key === 'gpt3' ? ' We assume it reuses its word table for this, as GPT-2 does; its paper says it keeps GPT-2’s design, apart from alternating dense and locally banded sparse attention layers.' : ' This model reuses its word table to do it.') : ''));
       set(R.sample.text, 'Softmax turns logits into probabilities, and one token is drawn. Then it is appended and the whole stack runs again, once per token.' + ' <span class="ep-more">Real systems keep a KV cache so earlier positions are not recomputed.</span>');
       set(R.train.text, 'Where all the numbers come from: compare the prediction with the real next token, send the error back down through every box, and nudge each parameter. Repeat for millions to trillions of tokens. <span class="ep-more">Hover or tap here to send the error down as red beads.</span>');
       // total
@@ -1725,7 +1731,7 @@
       + 'Tags in <span class="dye-cochineal">red-violet</span> mark refinements that GPT-2 and GPT-3 do not use.' }));
   }
 
-  // ================================================================== refinements, recap, left out
+  // ================================================================== refinements, left out
   const REFINE = [
     { name: 'RMSNorm', dye: 'woad', ch: 'residual', text: 'LayerNorm without subtracting the mean: divide each vector by its root-mean-square, then multiply by a learned gain. Cheaper, and works about as well.' },
     { name: 'Rotary position embeddings', dye: 'lichen', ch: 'position', text: 'No position table. Pairs of numbers in each query and key are rotated by angles set by the token’s position, so q·k depends on how far apart two tokens are.' },
@@ -1733,7 +1739,7 @@
     { name: 'Grouped-query attention', dye: 'woad', ch: 'heads', text: 'Many query heads share a few key/value heads (128 and 8 in Llama 3.1 405B), which shrinks the KV cache.' },
     { name: 'Mixture of experts', dye: 'verdigris', ch: 'mlp', text: 'Many expert MLPs per layer and a router that sends each token to a few of them. Total parameters grow much faster than the work per token.' },
     { name: 'The KV cache', dye: 'weld', ch: 'predict', text: 'While generating, the keys and values of earlier tokens are kept, so each new token computes one new row of attention instead of redoing every position.' },
-    { name: 'Instruction tuning and RLHF', dye: 'madder', ch: 'train', text: 'After pre-training on raw text, fine-tuning on example dialogues and on human preference comparisons turns a text continuer into an assistant.' },
+    { name: 'Instruction tuning and RLHF', dye: 'madder', ch: 'train', text: 'After pretraining on raw text, fine-tuning on example dialogues and on human preference comparisons turns a text continuer into an assistant.' },
     { name: 'Tool use', dye: 'saffron', ch: 'predict', text: 'The model learns to write special tokens that call a search engine, a calculator or a code runner. The results are pasted into its context, and it carries on.' },
   ];
 
@@ -1756,18 +1762,8 @@
     body.appendChild(sec);
   }
 
-  const RECAP = [
-    { chs: ['tokens'], dye: 'weld', text: 'Text becomes a list of integer ids.' },
-    { chs: ['embed', 'position'], dye: 'saffron', text: 'Each id becomes a learned vector, and its position is mixed in.' },
-    { chs: ['attention'], dye: 'woad', text: 'Each token gathers from itself and earlier tokens, weighted by softmax(q·k/√d<sub>k</sub>).' },
-    { chs: ['heads'], dye: 'lichen', text: 'Several heads do this side by side, each asking its own question.' },
-    { chs: ['mlp'], dye: 'verdigris', text: 'An MLP then transforms every token on its own.' },
-    { chs: ['residual', 'stack'], dye: 'weld', text: 'Each block reads the residual stream and adds to it, layer after layer.' },
-    { chs: ['predict'], dye: 'cochineal', text: 'The last position’s vector becomes a score for every token in the vocabulary; one is sampled, appended, and the loop runs again.' },
-    { chs: ['train', 'lab'], dye: 'madder', text: 'Every number in it was learned by predicting the next token, over and over.' },
-  ];
   const LEFT_OUT = [
-    '<strong>Real tokenizers at full size.</strong> Our model reads 138 whole words; real ones read subword pieces from vocabularies of tens of thousands to a few hundred thousand.',
+    '<strong>Real tokenizers at full size.</strong> Our model reads 134 whole words (138 tokens with punctuation and two special tokens); real ones read subword pieces from vocabularies of tens of thousands (<span style="white-space: nowrap">GPT-2</span>) to a few hundred thousand.',
     '<strong>Engineering at scale.</strong> Thousands of GPUs, one model split across many chips, low-precision arithmetic, weeks to months of training.',
     '<strong>Data.</strong> Collecting, filtering and deduplicating trillions of tokens, which matters as much as the architecture.',
     '<strong>Long contexts.</strong> FlashAttention, sliding windows and other tricks that make long inputs affordable.',
@@ -1777,19 +1773,11 @@
     '<strong>How big models think.</strong> Interpretability at this scale is still largely an open question.',
   ];
 
-  function buildRecap(body, ctx) {
+  function buildLeftOut(body, ctx) {
     const el = ctx.el;
-    const grid = el('div', { class: 'grid-2 ep-lists' });
-    const ol = el('ol', { class: 'ep-threads' });
-    RECAP.forEach((r) => {
-      const li = el('li', { html: r.chs.map(chLink).join(' ') + ' ' + r.text });
-      li.style.setProperty('--c', AM.dye[r.dye]);
-      ol.appendChild(li);
-    });
     const ul = el('ul', { class: 'ep-left' });
     LEFT_OUT.forEach((t) => ul.appendChild(el('li', { html: t })));
-    grid.append(el('div', {}, el('h3', {}, 'The journey in eight threads'), ol), el('div', {}, el('h3', {}, 'What this page left out'), ul));
-    body.appendChild(grid);
+    body.appendChild(el('div', { class: 'ep-lists' }, el('h3', {}, 'What this page left out'), ul));
   }
 
   // ================================================================== coda: the finished cloth
@@ -1919,6 +1907,11 @@
         g.strokeStyle = AM.rgba(AM.col.linen, 0.16 + 0.12 * fr());
         g.beginPath(); g.moveTo(x, G.oy); g.lineTo(x + (fr() - 0.5) * 2, top); g.moveTo(x, G.oy + G.rows * G.p); g.lineTo(x + (fr() - 0.5) * 2, bot); g.stroke();
       }
+      // the whole design, faint, as a cartoon on the warp: complete at rest, and the weave fills it in
+      g.save();
+      g.globalAlpha = 0.34;
+      for (let r = 0; r < G.rows - st.done; r++) for (let c = 0; c < G.cols; c++) drawCell(g, G, r, c);
+      g.restore();
       for (let k = 0; k < st.done; k++) { const r = G.rows - 1 - k; for (let c = 0; c < G.cols; c++) drawCell(g, G, r, c); }
     }
     cv.onResize((w, h) => {
@@ -1988,8 +1981,7 @@
       const fs = w < 560 ? 8.5 : 9.5, lx = G.ox + G.mc0 * G.p - (w < 560 ? 5 : 8);
       for (let i = 0; i < N; i++) {
         const top = G.mr0 + i * G.m;
-        const a = clamp((st.done - (G.rows - top - G.m)) / G.m);
-        if (a <= 0.01) continue;
+        const a = Math.max(0.5, clamp((st.done - (G.rows - top - G.m)) / G.m));
         halo(g, toks[i], lx, G.oy + (top + G.m / 2) * G.p, { size: fs, align: 'right', color: AM.col.linenDim, alpha: 0.9 * a, haloW: 3.5 });
       }
     }
@@ -2026,7 +2018,7 @@
       buildZoom(body, ctx, DATA);
       buildPoster(body, ctx, DATA);
       buildRefinements(body, ctx);
-      buildRecap(body, ctx);
+      buildLeftOut(body, ctx);
 
       body.appendChild(el('div', { class: 'callout ep-key' },
         el('div', { class: 'callout-label' }, 'Key idea'),
