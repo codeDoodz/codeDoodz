@@ -24,6 +24,7 @@ tools/train.mjs           trains reverse/sort in JS (and drives the tinyworld pi
 tools/gradcheck.mjs       finite-difference checks of every op and the full model
 tools/test-model.mjs      the whole test suite (exit code 1 on failure)
 tools/analyze-tinyworld.mjs  which heads do what, logit lens per dependency type
+tools/heldout-overlap.mjs    which test contexts also occur in training (seen vs novel accuracy)
 tools/fixtures/           tinyworld held-out set + numpy logits for the parity test
 ```
 
@@ -89,9 +90,33 @@ capital 7%, sound 6%, colorfact 7%, walk 4%. Vocabulary: 138 tokens (`<pad>`, `<
 
 **Held-out split.** Every templated unit's text is hashed (FNV-1a); units with
 `hash % 10 == 0` never appear in training. The test set (4,000 sequences,
-`tools/fixtures/tinyworld-test.json`) is built only from those held-out units, so every
-pronoun/agreement/binding/copy sentence scored there is new to the model. Fact units and
-the parrot/walk units are shared by both splits (facts have to be memorised).
+`tools/fixtures/tinyworld-test.json`) is built only from those held-out units. Fact and
+walk units are shared by both splits (facts have to be memorised).
+
+**What "held out" does and does not mean.** The hash covers the *whole unit*, but the
+model is scored on the word right after the unit's *context*, and the same context often
+occurs in training with a different ending (`the queen opened the door because she was
+tired .` in training, `… she was cold .` in the test set). An independent check
+(`node tools/heldout-overlap.mjs`, which regenerates the exact training stream) found:
+
+| type | test contexts that also occur in training | accuracy on contexts never seen |
+|---|---|---|
+| agreement | 100% (the grammar has only ~1,100 agreement contexts) | — (none exist) |
+| possessive | 100% | — (none exist) |
+| pronoun | 98% | 100% (n = 23) |
+| binding | 25% | **99.5%** (n = 1,057) |
+| copy, parrot | 0% (their units are fixed by the context) | **100%** |
+| recall *(probe)* | 3% | 54% |
+
+So the pronoun / possessive / agreement scores are in-distribution accuracy, not proof of
+generalisation to unseen sentences. The evidence that the model uses the antecedent rather
+than memorised strings comes from elsewhere: binding, copy and parrot are scored almost
+entirely on contexts it never saw; every minimal pair we tried flips the prediction
+(`the king/queen … because` → he/she, `the key near the old doors` → is vs `the keys near
+the old door` → are, `alice gave bob …` vs `bob gave alice …`, `the red ball and the blue
+box . the box is` vs `the blue ball and the red box . the box is`); and a check retrain with
+a split that holds out contexts (below, §7) reached 100% on pronoun, possessive and
+agreement contexts it had never seen.
 
 ### Training
 
@@ -197,10 +222,12 @@ What they learn (probe inputs):
 - **reverse**: a perfect anti-diagonal. Output position 8 + j attends to input position
   7 − j with weight ≥ 0.98. Watching it crystallise is fast (≈ 75 steps), so the Lab may
   want `delayMs` (slow motion) or a lower `lr` for reverse.
-- **sort**: L0H1 at each output position attends to the next larger digit present in the
-  input (`>`→1, `1`→2, `3`→5, `5`→7, `7`→9 on `73519273`), the classic "smallest digit
-  greater than the last one" pattern. Repeated digits are handled by the second layer;
-  its patterns are softer.
+- **sort**: L0H1's *strongest* key at each output position is the next larger digit
+  present in the input (`>`→1, `1`→2, `3`→5, `5`→7, `7`→9 on `73519273`), the classic
+  "smallest digit greater than the last one" pattern. The weights are soft, not crisp:
+  0.17–0.43 at most positions (0.62 at the last), the rest spread over other input
+  digits. Repeated digits are handled by the second layer; its patterns are softer still.
+  Draw it as "leans towards", not as a one-hot pointer.
 
 ## 4. Notes for chapter authors
 
@@ -217,11 +244,17 @@ What they learn (probe inputs):
   with capture in Node on a busy machine; a few ms without capture.
 - `generate(ids, opts)` returns the **whole** sequence (prompt + new ids) and stops after
   emitting `stopAt` (default `'.'` for tinyworld). `sample()` never emits `<pad>`/`<unk>`;
-  `temperature: 0` is greedy; `topP` is nucleus sampling after temperature.
+  `temperature: 0` is greedy; `topP` is nucleus sampling after temperature. `rng` may be a
+  `() => [0,1)` function or an object with `.next()` (e.g. `AM.model.lib.AMTensorLib().rng(seed)`);
+  default `Math.random`.
 - `m.meta` holds the accuracies (`meta.test_accuracy`), data description, loss curve and,
   for tinyworld, `meta.analysis` (top heads per dependency type, logit-lens curves,
   previous-token scores) for honest captions.
-- Plausible-looking but **unsupported** claims to avoid: the model does not do colour →
+- Plausible-looking but **unsupported** claims to avoid: "it has never seen these
+  sentences" for pronoun/possessive/agreement examples (their contexts are in training; see
+  §2); handling constructions outside the grammar (e.g. `the queen and the king opened the
+  door because` → he 0.67, not they; plural `boys`/`girls` are not in the vocabulary); the
+  model does not do colour →
   noun lookups (`alice found the blue …` is a coin flip among the listed objects); it has
   no strong general previous-token head (best is ~0.33 on average, L0H3); and the parrot
   copy may lean on positional offsets as much as on content (the phrase is always the
@@ -271,6 +304,36 @@ ctl.set({lr: 1e-3, delayMs: 200, maxSteps: 5000}); ctl.terminate();
    (anti-diagonal attention), and the main-thread Lab path gets sort to ≥ 90%.
 6. Timing.
 
+### Independent adversarial verification (second pass)
+
+Re-checked from scratch, without the suite above:
+
+- **Reference forward.** A separate numpy implementation decoding the base64 weights itself
+  matches `run()` on all three models: logits ≤ 6e-6, attention ≤ 4e-7, q/k/v ≤ 1.5e-6,
+  residuals ≤ 2e-5, MLP ≤ 2e-6 (inputs up to 32 tokens, including truncation). Rows sum to
+  1 (≤ 8e-8), exactly 0 above the diagonal, `lens[n_layer]` = `probs` exactly, all shapes
+  per CONTRACT §6.
+- **Gradients.** Fresh 2-layer, 3-head model with large random perturbations, batch 3,
+  masked CE with weights 0/0.5/1: max rel. error 2e-5 (the K-bias, whose true gradient is 0;
+  absolute errors < 1e-9). Attention output equals a hand-written softmax(QKᵀ/√d_head)V;
+  masked rows receive exactly zero gradient; AdamW matches a reference implementation to
+  1e-15 including bias correction; weight decay touches only `wqkv, wo, wfc, wproj, wout`
+  (not LN, biases or embeddings).
+- **Accuracies on freshly generated data** (6,000 new test sequences, seed 777777):
+  pronoun, possessive, agreement, copy, parrot, capital, sound, colorfact 100.0%; binding
+  99.6%; recall probe 54%. Greedy autoregressive generation on 10,000 new inputs: reverse
+  100.00%, sort 99.84% exact (99.98% per digit).
+- **Reproducibility.** Re-training reverse and sort with seed 1 reproduces the shipped
+  weights bit for bit.
+- **Worker.** The exact `workerSource()` string, evaluated in strict mode in an empty vm
+  context (only `self`, timers, `performance`), handles init/step/start/pause/set/reset and
+  learns reverse (90% at step 71) and sort (90% at step 394, seed 7); ESLint `no-undef` on
+  the worker source finds no free variables. Headless Chromium from `file://`: real blob
+  Worker (`inline === false`), reverse 90% at step 69, sort 90% at step 218 (12.2 s wall);
+  both fallback paths (Worker constructor throws / worker errors before `ready`) switch to
+  the main thread and train; no console errors. `run()` on 27 tokens: 6.4 ms with capture,
+  4.5 ms without.
+
 ## 6. Reproducing
 
 ```
@@ -290,6 +353,13 @@ node tools/analyze-tinyworld.mjs --md   # the head / logit-lens tables above
   and the report because it is a real, honest limit of this small model.
 - Binding took a phase change to appear (step ~5,000 of 12,000). Re-training with a
   different seed or mix may land it later or not at all; check `meta.test_accuracy`.
+  This was confirmed by a check retrain (same settings, seed 1) whose only change was the
+  held-out split, hashing each unit's context before its first critical word instead of
+  the whole unit. That run learned the *other* direction: recall 100%, binding only 77.6%
+  (still rising from 50% at step ~9,500 when training ended). It also scored 100% on
+  pronoun, possessive and agreement contexts that never occurred in its training data. Its
+  binding fell below the 95% bar, so it was not shipped. The shipped weights and the curated
+  head notes above are unchanged.
 - Facts are memorised from shared (not held-out) sentences; their test accuracy measures
   recall in new contexts, not generalisation.
 - The vocabulary is 138 tokens, slightly above the ~130 first planned (colour facts and

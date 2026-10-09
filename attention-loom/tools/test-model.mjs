@@ -97,6 +97,11 @@ section('3. AM.model API contract');
   let inTopP = true;
   for (let i = 0; i < 200; i++) { const id = m.sample(r.probs[2], { topP: 0.5, rng: seeded(i + 11) }); if (r.probs[2][id] < 0.01) inTopP = false; }
   ok(inTopP, 'topP sampling never picks a negligible token');
+  { // rng may also be the library's own rng object (with .next()), not only a function
+    const ra = AM.model.lib.AMTensorLib().rng(9), rb = AM.model.lib.AMTensorLib().rng(9);
+    ok(m.sample(r.probs[2], { temperature: 0.8, rng: ra }) === m.sample(r.probs[2], { temperature: 0.8, rng: () => rb.next() }),
+      'sample() accepts an rng object with .next()');
+  }
   const g = m.generate(m.encode('the capital of france is').ids, { maxNew: 10, temperature: 0 });
   ok(m.decode(g).join(' ') === 'the capital of france is paris .', `generate (greedy, stops at ".") → "${m.decode(g).join(' ')}"`);
   const g2 = m.generate(m.encode('alice gave bob a cup .').ids, { maxNew: 12, temperature: 0.7, rng: seeded(5) });

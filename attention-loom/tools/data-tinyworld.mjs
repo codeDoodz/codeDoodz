@@ -241,14 +241,14 @@ function sampleUnit(r, split) {
   }
 }
 
-/* A sequence of 1–3 units, ≤ SEQ_LEN tokens. Returns {words, crit:[{pos, type, target}]}. */
+/* A sequence of 1–3 units, ≤ SEQ_LEN tokens. Returns {words, crit:[{pos, type, target, unit}]}. */
 export function sampleSequence(r, split = 'train') {
   const nUnits = 1 + r.int(3);
   const words = [], crit = [];
   for (let k = 0; k < nUnits; k++) {
     const u = sampleUnit(r, split);
     if (words.length + u.w.length > SEQ_LEN) { if (k === 0) { k--; continue; } break; } // first unit must fit
-    for (const c of u.crit) crit.push({ pos: words.length + c.i, type: c.type, target: u.w[c.i] });
+    for (const c of u.crit) crit.push({ pos: words.length + c.i, type: c.type, target: u.w[c.i], unit: words.length }); // unit = where its unit starts
     words.push(...u.w);
   }
   return { words, crit };
