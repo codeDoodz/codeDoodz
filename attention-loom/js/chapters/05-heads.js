@@ -203,17 +203,17 @@
   // same 4,000 sequences). Live evidence is computed on screen.
   const HEADS = {
     L0H0: { name: 'the backstitch', role: 'A selective look-back. At “is” in “the box is” it reads “box”, the noun being asked about; from “door” in “the keys near the old door” it reads “near”. Muting it breaks agreement and many colour questions.', heldout: ['“is” → the noun just before it', 0.89, '1,004 colour questions'] },
-    L0H1: { name: 'the loose weave', role: 'No crisp pattern: it spreads its attention more evenly than any other head in layer 0. Yet the parrot needs it: muted, the parrot’s right next word falls to 69% on average (400 parrot words from the test set).', heldout: null },
+    L0H1: { name: 'the loose weave', role: 'No crisp pattern: it spreads its attention more evenly than any other head in layer 0. Yet the parrot leans on it: muted, the parrot’s right next word falls to 69% on average (400 parrot words from the test set).', heldout: null },
     L0H2: { name: 'the fact finder', role: 'Finds the key word further back: the country or city in a capital question, the animal before “says”, and the first name in a copying sentence.', heldout: ['capital question → the key word', 0.86, '469 sentences', 'capital', 0, 2] },
     L0H3: { name: 'the antecedent finder', role: 'At “because” and “with” it jumps back to the subject: the antecedent, the word a pronoun will refer to.', heldout: ['“because” → the subject', 0.95, '1,018 pronoun sentences', 'pronoun', 0, 3] },
     L1H0: { name: 'the second colour reader', role: 'At “is” in a colour question it spreads over all the colours, the right one and the wrong ones alike. Muting it changes nothing we measured.', heldout: ['“is” → every colour word (right 0.26, wrong 0.30)', 0.56, '1,004 colour questions'] },
-    L1H1: { name: 'the clause hopper', role: 'Hops back to the previous clause: at “thanked” it finds the earlier verb “gave”, and at “the box is” it finds the full stop before it.', heldout: ['“thanked” / “waved” → the earlier verb', 0.79, '749 copying sentences'] },
-    L1H2: { name: 'the head-noun tracker', role: 'Remembers which noun a phrase is about: in “the keys near the old door” it looks from “door” back to “keys”. In copying sentences it finds the other name.', heldout: ['attractor noun → the head noun', 0.87, '899 agreement sentences', 'agreement', 1, 2] },
-    L1H3: { name: 'the colour binder', role: 'At “is” it finds the colour that went with the asked-about noun. In parrot sentences it acts like a small induction head.', heldout: ['“is” → the right colour (wrong colours get 0.19)', 0.75, '1,004 colour questions', 'binding→colour', 1, 3] },
-    L2H0: { name: 'the idle shuttle', role: 'Often rests on the first word, and muting it changes nothing we measured. One habit stands out: after “alice and bob … because” it looks at the plural “and”.', heldout: ['“because” → the “and” in “x and y”', 0.78, '64 plural sentences'] },
-    L2H1: { name: 'the verb echo', role: 'Echoes the earlier verb in copying sentences, like the clause hopper one layer up. It also parks more attention on the first word than any other head.', heldout: ['“thanked” / “waved” → the earlier verb', 0.52, '749 copying sentences'] },
+    L1H1: { name: 'the clause hopper', role: 'Hops back to the previous clause: at “thanked” it finds the earlier verb “gave”, and at “the box is” it finds the full stop before it.', heldout: ['at “thanked” / “waved at” → the earlier verb', 0.86, '749 copying sentences'] },
+    L1H2: { name: 'the head-noun tracker', role: 'Looks back to the noun a phrase is about: in “the keys near the old door” it looks from “door” back to “keys”. In copying sentences it finds the other name, though other heads carry the name too.', heldout: ['attractor noun → the head noun', 0.87, '899 agreement sentences', 'agreement', 1, 2] },
+    L1H3: { name: 'the colour binder', role: 'At “is” it finds the colour that went with the asked-about noun. In parrot sentences it points at the next colour to repeat, a little like an induction head.', heldout: ['“is” → the right colour (wrong colours get 0.19)', 0.75, '1,004 colour questions', 'binding→colour', 1, 3] },
+    L2H0: { name: 'the idle shuttle', role: 'Often rests on the first word, and muting it changes nothing we measured. One habit stands out: after “alice and bob … because” it looks at the plural “and”.', heldout: ['“because” → the “and” in “x and y”', 0.80, '61 “x and y … because” sentences'] },
+    L2H1: { name: 'the verb echo', role: 'Echoes the earlier verb in copying sentences, as the clause hopper does one layer earlier. It also parks more attention on the first word than any other head.', heldout: ['at “thanked” / “waved at” → the earlier verb', 0.56, '749 copying sentences'] },
     L2H2: { name: 'the faint echo', role: 'Weaker copies of other heads’ jobs: the subject at “because”, the head noun in agreement.', heldout: ['“because” → the subject', 0.31, '1,018 pronoun sentences', 'pronoun', 2, 2] },
-    L2H3: { name: 'the idle shuttle II', role: 'Often resting too, and just as unmissed. It does glance at the plural “and”, and at the animal before “says”.', heldout: ['“because” → the “and” in “x and y”', 0.71, '64 plural sentences'] },
+    L2H3: { name: 'the idle shuttle II', role: 'Often resting too, and just as unmissed. It does glance at the plural “and”, and at the animal before “says”.', heldout: ['“because” → the “and” in “x and y”', 0.72, '61 “x and y … because” sentences'] },
   };
   /** Head name, preferring the interpretability notes (AM_NOTES) when they are loaded. */
   function headName(l, h) {
@@ -247,7 +247,8 @@
     return [H[0], v, H[2]];
   }
 
-  // Curated sentences: each opens the atlas on the head that does its work.
+  // Curated sentences: each opens the atlas on the head with the clearest pattern for it (all
+  // verified with the shipped weights; for “they” no single head is needed, see the mute test).
   const PRESETS = [
     { label: 'Pronoun · queen', text: 'the queen opened the door because', head: [0, 3], ans: 'she', short: 'the queen … because' },
     { label: 'Pronoun · king', text: 'the king opened the door because', head: [0, 3], ans: 'he', short: 'the king … because' },
@@ -415,6 +416,7 @@
         radial-gradient(120% 90% at 40% 40%, color-mix(in srgb, var(--ink-2) 94%, var(--weld)) 0%, var(--ink-2) 55%, var(--ink) 100%);
     }
     #ch-${ID} .hd-stage-cap { max-width: 62ch; }
+    @media (max-width: 520px) { #ch-${ID} .hd-long { display: none; } }
     @media (max-width: 900px) {
       #ch-${ID} .hd-stage-cap { display: none; }
       #ch-${ID} .hd-stagefig { gap: 6px; }
@@ -466,7 +468,7 @@
     #ch-${ID} .hd-pick:hover { border-color: color-mix(in srgb, var(--hc) 60%, var(--rule)); }
     #ch-${ID} .hd-pick[aria-pressed='true'] { border-color: var(--hc); background: color-mix(in srgb, var(--hc) 8%, var(--ink)); box-shadow: 0 0 0 1px var(--hc), 0 0 22px -8px var(--hc); }
     #ch-${ID} .hd-pick .stage-canvas canvas { border-radius: 5px; }
-    #ch-${ID} .hd-pname { font-size: 11px; font-weight: 600; line-height: 1.2; color: var(--linen); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #ch-${ID} .hd-pname { font-size: 11px; font-weight: 600; line-height: 1.2; color: var(--linen); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; min-height: 2.4em; }
     #ch-${ID} .hd-pev { font-family: var(--font-mono); font-size: 9.5px; color: var(--hc); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #ch-${ID} .hd-mute {
       position: absolute; top: 9px; right: 9px; z-index: 1; border: 1px solid var(--rule-strong); background: color-mix(in srgb, var(--ink) 85%, transparent);
@@ -519,7 +521,7 @@
     @media (max-width: 520px) {
       #ch-${ID} .hd-cells { gap: 6px 5px; }
       #ch-${ID} .hd-pick { padding: 4px 4px 5px; border-radius: 7px; }
-      #ch-${ID} .hd-pname { font-size: 9.5px; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; min-height: 2.4em; }
+      #ch-${ID} .hd-pname { font-size: 9.5px; }
       #ch-${ID} .hd-chip { font-size: 10px; padding: 4px 9px; letter-spacing: 0.03em; }
       #ch-${ID} .hd-pev { font-size: 8.5px; }
       #ch-${ID} .hd-mute { top: 6px; right: 6px; padding: 0 5px 1px; font-size: 7.5px; }
@@ -535,9 +537,16 @@
     const H = S.H, T = S.toks.length, tq = S.t;
     const cv = ctx.canvas(host, {
       label: `The prism, live model, layer 0. The token “because” at the end of “${STAGE_TEXT}” sends its residual vector into a glass prism that splits it into four coloured beams, one per attention head. Each beam fans out into that head's real attention threads over the sentence. Head 3 puts ${f2(S.attn[3][1])} of its attention on “queen”.`,
-      height: (w) => (w < 520
-        ? Math.round(Math.min(Math.max(340, w * 1.04), 410, Math.max(320, window.innerHeight * 0.5)))
-        : Math.round(Math.min(Math.max(500, w * 0.88), 600, Math.max(460, window.innerHeight * 0.72)))),
+      height: (w) => {
+        const vh = window.innerHeight;
+        let h = w < 520
+          ? Math.min(Math.max(340, w * 1.04), 410, Math.max(320, vh * 0.5))
+          : Math.min(Math.max(500, w * 0.88), 600, Math.max(460, vh * 0.72));
+        // stacked layout (stage pinned above the text): keep the stage under half the screen,
+        // so the step card that is active is the one you can read below it
+        if (window.innerWidth <= 900) h = Math.min(h, Math.max(260, vh * 0.45));
+        return Math.round(h);
+      },
     });
     const g = cv.g;
     const seen = inView(cv.canvas);
@@ -574,9 +583,12 @@
       const A = { x: px - s * 0.45, y: py - s * 0.85 }, B = { x: px - s * 0.45, y: py + s * 0.85 }, Cc = { x: px + s * 0.8, y: py };
       const lerp = (P1, P2, u) => ({ x: P1.x + (P2.x - P1.x) * u, y: P1.y + (P2.y - P1.y) * u });
       const pin = lerp(B, Cc, 0.42), pout = lerp(A, Cc, 0.42), core = { x: px - s * 0.02, y: py };
-      const exits = M.range(H).map((hh) => ({ x: A.x, y: py + (hh - (H - 1) / 2) * s * 0.34 }));
+      // one exit per head on the left face; each sits at the middle of that head's quarter of the face,
+      // which is where its 16-number output lands when the four are concatenated
+      const exits = M.range(H).map((hh) => ({ x: A.x, y: py + (hh - (H - 1) / 2) * (1.7 * s / H) }));
       const readY = pin.y + s * 0.42;
       const writeY = Math.max(laneTop + (phone ? 26 : 40), A.y - s * 0.55);
+      const faceSeg = (B.y - A.y) / H, faceBar = Math.round(s * (phone ? 0.36 : 0.3));
       const lift = (j) => {
         if (j === tq) return phone ? 7 : 10;
         const u = Math.abs(slots[j].cx - xq) / span;
@@ -604,7 +616,7 @@
       const resLen = (resX - resPath.x0) + (tokY - 6);
       return {
         w, h, phone, colW, loomX0, loomX1, tokY, tokSize, fs, laneTop, laneBot, laneH, base, slots, xq, resX, s, px, py, A, B, Cc,
-        pin, pout, core, exits, readY, writeY, arcs, beams, tile, resPath, readB, writeB, qStrip, xStrip, outStrip, cw16, resLen,
+        pin, pout, core, exits, readY, writeY, arcs, beams, tile, resPath, readB, writeB, qStrip, xStrip, outStrip, cw16, resLen, faceSeg, faceBar,
       };
     }
 
@@ -746,7 +758,8 @@
       const k = AM.reducedMotion ? 1 : 1 - Math.exp(-dt * 3.2);
       for (const key in st.tgt) st.a[key] += (st.tgt[key] - st.a[key]) * k;
       // the strips' flight into the prism runs on its own clock, after the values have flowed back
-      const fl = st.step === 3 ? clamp((t - st.tStep - 1.1) / 1.1) : 0;
+      // (leaving step 3 it eases back instead of jumping)
+      const fl = st.step === 3 ? clamp((t - st.tStep - 1.1) / 1.1) : st.fly * (1 - k);
       st.fly = AM.reducedMotion ? (st.step === 3 ? 1 : 0) : fl;
       if (AM.reducedMotion) parts.length = 0; else stepParticles(dt);
       const a = st.a;
@@ -815,7 +828,7 @@
           let jb = 0; for (let j = 1; j <= tq; j++) if (S.attn[hh][j] > S.attn[hh][jb]) jb = j;
           const apex = bezAt(Lo.arcs[hh][jb], 0.5);
           const big = S.attn[hh][jb] > 0.6;
-          haloText(g, `${f2(S.attn[hh][jb])} → ${S.toks[jb]}`, jb === tq ? apex.x - 12 : apex.x, apex.y - (phone ? 7 : 9), {
+          haloText(g, `${f2(S.attn[hh][jb])} → ${tokTiny(S.toks, jb)}`, jb === tq ? apex.x - 12 : apex.x, apex.y - (phone ? 7 : 9), {
             size: big ? (phone ? 10 : 12) : (phone ? 8.5 : 10), color: col, weight: big ? 600 : 400, alpha: clamp((a.arcs - 0.8) * 5) * fadeLoom, align: jb === tq ? 'right' : 'center',
           });
         }
@@ -823,6 +836,18 @@
 
       // query strips (q^h) then output strips (o^h), 16 numbers each, in each lane's header
       const fly = ease.inOut(st.fly || 0);
+      const colA = a.os * fadeLoom * clamp((fly - 0.85) / 0.15);
+      if (colA > 0.01) {
+        // the concatenated vector: one dark slot along the face holding all four outputs
+        const bh = Lo.faceBar, x0 = Lo.A.x - bh - 5;
+        g.save();
+        g.globalAlpha = colA;
+        D.roundRect(g, x0, Lo.A.y + 1, bh + 4, Lo.B.y - Lo.A.y - 2, 3);
+        g.fillStyle = AM.rgba(AM.col.ink, 0.86); g.fill();
+        g.strokeStyle = AM.rgba(AM.col.linen, 0.22); g.lineWidth = 1; g.stroke();
+        g.restore();
+        haloText(g, phone ? `${S.d}` : `concat · ${S.d}`, x0 + (bh + 4) / 2, Lo.A.y - (phone ? 7 : 9), { size: phone ? 8 : 9, color: AM.col.linenDim, alpha: colA, halo: AM.rgba(AM.col.ink, 0.85), haloW: 3 });
+      }
       for (let hh = 0; hh < H; hh++) {
         const r = Lo.qStrip[hh], col = hc(hh);
         const sq = a.qs * fadeLoom * (1 - a.os);
@@ -832,11 +857,16 @@
         }
         const so = a.os * fadeLoom;
         if (so > 0.01) {
-          // the o strips fly into the prism's left face (concatenation) once the values have arrived
-          const E = Lo.exits[hh];
-          const x = M.lerp(r.x, E.x - r.w * 0.25, fly), y = M.lerp(r.y, E.y - r.h * 0.25, fly);
-          const sc = 1 - 0.75 * fly;
-          strip(g, x, y, r.w * sc, r.h * sc, S.ov[hh], { color: col, alpha: so * (1 - fly * fly), max: oMax });
+          // once the values have arrived, each o strip flies to its quarter of the prism's left face and
+          // turns upright there: the four of them, end to end, are the concatenated 64 numbers
+          const E = Lo.exits[hh], seg = Lo.faceSeg, bh = Lo.faceBar;
+          const cx = M.lerp(r.x + r.w / 2, E.x - bh / 2 - 3, fly), cy = M.lerp(r.y + r.h / 2, E.y, fly);
+          const sw = M.lerp(r.w, seg - 1.5, fly), sh = M.lerp(r.h, bh, fly);
+          g.save();
+          g.translate(cx, cy);
+          g.rotate(-Math.PI / 2 * fly);
+          strip(g, -sw / 2, -sh / 2, sw, sh, S.ov[hh], { color: col, alpha: so, max: oMax, frame: fly < 0.98 });
+          g.restore();
           if (fly < 0.3) haloText(g, 'o' + sup(hh), r.x + r.w + 5, r.y + r.h / 2, { size: phone ? 9.5 : 11, role: 'body', italic: true, align: 'left', color: col, alpha: so * (1 - fly / 0.3), halo: false });
         }
       }
@@ -860,7 +890,7 @@
           g.restore();
           const os = Lo.outStrip;
           strip(g, os.x, os.y, os.w, os.h, S.write, { color: AM.dye.weld, neg: AM.dye.madder, alpha: al });
-          haloText(g, `Concat · W_O → ${S.d}`, os.x + os.w, os.y - (phone ? 7 : 9), { size: phone ? 7.5 : 9, align: 'right', color: AM.dye.weld, alpha: al, halo: false });
+          haloText(g, `after W_O · ${S.d}`, os.x + os.w, os.y - (phone ? 7 : 9), { size: phone ? 7.5 : 9, align: 'right', color: AM.dye.weld, alpha: al, halo: false });
         }
       }
 
@@ -1015,7 +1045,7 @@
     const ARIA = [
       `Live model, layer 0. The token “because” sends its 64-number residual vector up into a clear glass prism. Four empty lanes wait above the sentence “${STAGE_TEXT}”.`,
       'The prism splits the vector into four coloured beams, one per head. Each beam carries a 16-number query, shown as a small strip.',
-      'Each head draws its own attention threads from “because” to the earlier words. ' + M.range(H).map((hh) => `Head ${hh}: strongest ${f2(S.attn[hh][best(hh)])} on “${S.toks[best(hh)]}”.`).join(' '),
+      'Each head draws its own attention threads from “because” to the earlier words. ' + M.range(H).map((hh) => `Head ${hh}: strongest ${f2(S.attn[hh][best(hh)])} on “${tokName(S.toks, best(hh))}”.`).join(' '),
       'Values flow back along every thread. The four 16-number outputs are laid side by side into 64 numbers, pass through the prism again as W_O, and are added to the residual stream.',
       'The real query matrix W_Q of layer 0 drawn as cloth: 64 rows by 64 columns, cut into four coloured bands of 16 columns, one per head.',
     ];
@@ -1415,14 +1445,17 @@
     const el = ctx.el;
     const { n_layer: NL, n_head: NH } = m.config;
     const K = NL * NH;
+    // Nothing runs at mount: every forward pass (the unmuted baseline, twelve single
+    // mutes, then all of the last layer muted at once) waits in a queue that the
+    // loop works through, a few passes per frame, once the grid is on screen.
     const rows = PRESETS.map((p) => {
       const ids = m.encode(p.text).ids;
-      const ans = m.tokenId(p.ans);
-      const base = m.run(ids).probs[ids.length - 1][ans];
-      return { p, ids, ans, base, P: new Array(K).fill(null), top: new Array(K).fill(null), born: new Array(K).fill(0) };
+      return { p, ids, ans: m.tokenId(p.ans), base: null, lastAll: null, P: new Array(K).fill(null), top: new Array(K).fill(null), born: new Array(K).fill(0) };
     });
     const queue = [];
-    rows.forEach((_, r) => { for (let k = 0; k < K; k++) queue.push([r, k]); });
+    rows.forEach((_, r) => { queue.push([r, 'base']); for (let k = 0; k < K; k++) queue.push([r, k]); });
+    rows.forEach((_, r) => queue.push([r, 'last']));
+    const LAST = new Set(M.range(NH).map((h) => (NL - 1) * NH + h));
     let labMax = 0;
     const fig = el('figure', { class: 'fig hd-mt' });
     fig.appendChild(el('div', { class: 'fig-top' }, el('span', { class: 'fig-title' }, 'The mute test · one head off at a time'), AM.ui.badge('live')));
@@ -1434,7 +1467,7 @@
     cvs.canvas.setAttribute('tabindex', '0');
     const cap = el('p', { class: 'hd-mt-cap', 'aria-live': 'polite' });
     fig.appendChild(cap);
-    const DEFAULT_CAP = 'Each row is one example and its right answer; each column mutes one head and reruns the model. A red knot means the answer broke, and the number is its probability with that head muted. Click a knot to open it in the atlas.';
+    const DEFAULT_CAP = 'Each row is one example and its right answer; each column mutes one head and reruns the model. A red knot means the right answer lost probability: the bigger the knot, the bigger the loss, and the number is what is left of it. Point at a knot (or tap it) to read it; click it (or tap again) to open that case in the atlas.';
     cap.textContent = DEFAULT_CAP;
     const st = { hover: null, cursor: null, vis: inView(cvs.canvas, '60px') };
 
@@ -1467,7 +1500,7 @@
       if (!c) return DEFAULT_CAP;
       const R = rows[c.r], l = Math.floor(c.k / NH), h = c.k % NH;
       const v = R.P[c.k];
-      if (v == null) return 'Still computing…';
+      if (v == null || R.base == null) return 'Still computing…';
       const t = R.top[c.k] && R.top[c.k][0];
       const now = t && t.token !== R.p.ans ? ` The model now says “${t.token}” (${pct(t.p)}).` : '';
       return `Mute L${l}H${h} (${headName(l, h)}) on “${R.p.text}”: P(${R.p.ans}) = ${pct(v)}, was ${pct(R.base)}.${now} Click or press Enter to open it in the atlas.`;
@@ -1519,7 +1552,7 @@
           g.fillStyle = AM.rgba(hc(h), 0.16);
           g.fillRect(x + G.cell / 2 - 0.75, y + pad, 1.5, G.cell - pad * 2);
           const v = R.P[k];
-          if (v == null) continue;
+          if (v == null || R.base == null) continue;
           const born = clamp((t - R.born[k]) / 0.35);
           const broken = clamp((R.base - v) / Math.max(1e-6, R.base));
           if (broken > 0.03) {
@@ -1536,7 +1569,7 @@
             D.glowDot(g, x + G.cell / 2, cy, Math.max(1, G.cell * 0.06), hc(h), 0.55 * born);
           }
         }
-        haloText(g, pct(R.base), G.baseX, cy, { size: G.phone ? 8.5 : 10, color: AM.col.mist, halo: false });
+        haloText(g, R.base == null ? '…' : pct(R.base), G.baseX, cy, { size: G.phone ? 8.5 : 10, color: AM.col.mist, halo: false });
       });
       const mark = (c, col) => {
         if (!c) return;
@@ -1552,18 +1585,20 @@
       while (queue.length && n < budgetRuns) {
         const [r, k] = queue.shift();
         const R = rows[r];
+        n++;
+        if (k === 'base') { R.base = m.run(R.ids).probs[R.ids.length - 1][R.ans]; continue; }
+        if (k === 'last') { const pa = eng.run(R.ids, LAST).probs; R.lastAll = pa[pa.length - 1][R.ans]; continue; }
         const pr = eng.run(R.ids, new Set([k])).probs;
         const last = pr[pr.length - 1];
         R.P[k] = last[R.ans];
         R.top[k] = m.topk(last, 3);
         R.born[k] = now();
-        n++;
       }
       if (!queue.length && onDone) { onDone(rows); onDone = null; }
     }
     ctx.loop(() => {
       if (!st.vis.on) return;
-      if (queue.length) work(AM.reducedMotion ? queue.length : 4);
+      if (queue.length) work(AM.reducedMotion ? 20 : 4);
       const t = now();
       // keep drawing while knots are still being tied, then only on interaction
       if (queue.length || t - lastBorn() < 0.5 || st.dirty) { draw(); st.dirty = false; }
@@ -1572,7 +1607,20 @@
     cvs.onResize(() => draw());
     cvs.canvas.addEventListener('pointermove', (e) => { const p = cvs.pointer(e); const c = hit(p.x, p.y); if (JSON.stringify(c) !== JSON.stringify(st.hover)) { st.hover = c; cap.textContent = describe(c); cvs.canvas.style.cursor = c ? 'pointer' : 'default'; st.dirty = true; } });
     cvs.canvas.addEventListener('pointerleave', () => { st.hover = null; cap.textContent = describe(st.cursor && document.activeElement === cvs.canvas ? st.cursor : null); st.dirty = true; });
-    cvs.canvas.addEventListener('click', (e) => { const p = cvs.pointer(e); const c = hit(p.x, p.y); if (c) onOpen(c.r, Math.floor(c.k / NH), c.k % NH); });
+    // touch has no hover: the first tap on a knot explains it, a second tap on the same knot opens it
+    let touchPick = null, lastPointer = 'mouse';
+    cvs.canvas.addEventListener('pointerdown', (e) => { lastPointer = e.pointerType || 'mouse'; });
+    cvs.canvas.addEventListener('click', (e) => {
+      const p = cvs.pointer(e); const c = hit(p.x, p.y);
+      if (!c) return;
+      if (lastPointer === 'touch' && !(touchPick && touchPick.r === c.r && touchPick.k === c.k)) {
+        touchPick = c; st.hover = c; st.dirty = true;
+        cap.textContent = describe(c).replace('Click or press Enter', 'Tap again');
+        return;
+      }
+      touchPick = null;
+      onOpen(c.r, Math.floor(c.k / NH), c.k % NH);
+    });
     cvs.canvas.addEventListener('focus', () => { if (!st.cursor) st.cursor = { r: 0, k: 3 }; cap.textContent = describe(st.cursor); st.dirty = true; });
     cvs.canvas.addEventListener('blur', () => { cap.textContent = DEFAULT_CAP; st.dirty = true; });
     cvs.canvas.addEventListener('keydown', (e) => {
@@ -1645,8 +1693,8 @@
 
       // ------------------------------------------------ intro
       body.appendChild(el('div', { class: 'prose hd-intro' },
-        el('p', { html: 'The head in chapter 4 had one job: it sent “it” looking for its creature. But at every position a sentence needs several jobs done at once. Before the model can write the word after <strong>“because”</strong>, it has to know who the subject is, whether there is one of them or many, and what they did.' }),
-        el('p', { html: `So each layer runs several <span class="term">attention heads</span> in parallel. The tiny model that ships with this page has ${C.n_head} heads in each of its ${C.n_layer} layers, and everything drawn from here on comes from it, computed live in your browser.` }),
+        el('p', { html: 'The head in chapter 4 had one job: it sent “it” looking for its creature. But at every position a sentence needs several jobs done at once. Before the model can write the word after <strong>“because”</strong>, it has to know who the subject is and whether there is one of them or many.' }),
+        el('p', { html: `So each layer runs several <span class="term">attention heads</span> in parallel. The tiny model that ships with this page has ${C.n_head} heads in each of its ${C.n_layer} layers, and every number from here on comes from it: the patterns and predictions are computed live in your browser.` }),
       ));
 
       // ------------------------------------------------ the prism (scrollytelling)
@@ -1656,6 +1704,8 @@
       const prose = el('div', { class: 'ch-prose' });
       split.append(stage, prose);
       const stageFig = ui.figure({ title: 'The prism · layer 0 · four heads', badge: 'live', cls: 'hd-stagefig' });
+      const stTitle = stageFig.querySelector('.fig-title');
+      if (stTitle) stTitle.innerHTML = 'The prism · layer 0<span class="hd-long"> · four heads</span>';
       stage.appendChild(stageFig);
       const prism = buildPrism(ctx, stageFig, S);
       stageFig.appendChild(el('figcaption', { class: 'hd-stage-cap', html: `Live model: every strip, thread and weight is read from one forward pass of “${STAGE_TEXT}”. Strips show vectors as bars (up = positive). The prism stands for the projections; real heads also add biases and read a LayerNorm’d copy of x.` }));
@@ -1696,7 +1746,7 @@
         {
           label: '5 · The same price',
           html: [
-            `Splitting costs nothing extra. Four heads of ${dh} use exactly as many weights as one head of ${C.d_model}: W<sub>Q</sub> is still one ${C.d_model} × ${C.d_model} matrix (the real one, drawn as cloth), cut into four bands. With W<sub>K</sub> and W<sub>V</sub> that is 3 × ${C.d_model} × ${C.d_model} = ${(3 * C.d_model * C.d_model).toLocaleString('en-US')} weights either way, and the scores take the same number of multiplications.`,
+            `Splitting costs nothing extra. Four heads of ${dh} use exactly as many weights as one head of ${C.d_model}: W<sub>Q</sub> is still one ${C.d_model} × ${C.d_model} matrix (the real one, drawn as cloth), cut into four bands. Add W<sub>K</sub>, W<sub>V</sub> and W<sub>O</sub> and it is 4 × ${C.d_model} × ${C.d_model} = ${(4 * C.d_model * C.d_model).toLocaleString('en-US')} weights either way, and the scores take the same number of multiplications.`,
             `Big models do the same at scale: GPT-3 runs 96 heads of 128 numbers in a 12,288-wide stream (12,288 / 96 = 128). What the split buys is variety. One softmax makes one pattern per token; four make four.`,
           ],
         },
@@ -1741,24 +1791,31 @@
           fill('copy', pct(Math.min(...cp.P)));
           let l2 = 1; rows.forEach((R) => { for (let k = 2 * NHh; k < 3 * NHh; k++) l2 = Math.min(l2, R.P[k]); });
           fill('l2', l2 >= 0.995 ? 'untouched (still 100%)' : `at ${pct(l2)} or more`);
+          fill('l2all', pct(Math.min(...rows.map((R) => R.lastAll))));
         } catch (e) { console.error('[heads] facts', e); }
       }
       const mt = eng ? buildMuteTest(ctx, mtSec, m, eng, (r, l, h) => atlas.openCase(r, l, h), fillFacts) : null;
-      // L1H3 at the parrot's "said": one cheap forward pass
-      let par1 = '“red”';
+      // L1H3 at the parrot's "said", and on a random repeated list: two cheap forward passes
+      let par1 = '“red”', rand = null;
       try {
         const pid = m.encode(PRESETS[8].text).ids, pr = m.run(pid, { capture: true });
         const row = pr.attn[1][3][pid.length - 1];
         let jb = 0; for (let j = 1; j < row.length; j++) if (row[j] > row[jb]) jb = j;
         par1 = `“${pr.tokens[jb]}”, ${f2(row[jb])}`;
-      } catch (e) { /* keep the fallback */ }
+        const rt = 'red cup blue box . red cup blue', rid = m.encode(rt).ids, rr = m.run(rid, { capture: true });
+        const rq = rid.length - 1, rrow = rr.attn[1][3][rq];
+        let rb = 0; for (let j = 1; j <= rq; j++) if (rrow[j] > rrow[rb]) rb = j;
+        const top = m.topk(rr.probs[rq], 1)[0];
+        if (rr.tokens[rb] !== 'box' && top.token !== 'box') rand = { text: rt, key: tokName(rr.tokens, rb), w: f2(rrow[rb]), top: top.token, p: pct(top.p) };
+      } catch (e) { /* keep the fallbacks */ }
       const findings = el('div', { class: 'hd-findings' },
-        eng ? el('p', {}, `Some heads have one crisp job, and muting them breaks exactly that job. Without ${headName(0, 3)} (L0H3), “she” falls from `, fid('she0'), ' to ', fid('she1'), ' and the model guesses ', fid('sheG'), `. Without ${headName(1, 2)} (L1H2), “the keys near the old door” is followed by `, fid('keys'), '.')
-          : el('p', {}, `Some heads have one crisp job: ${headName(0, 3)} (L0H3) finds who a pronoun should refer to, and ${headName(1, 2)} (L1H2) keeps track of whether the subject is one thing or many.`),
-        eng ? el('p', {}, `A blurry pattern does not mean an idle head: without ${headName(0, 1)} (L0H1), the parrot’s “red” falls to `, fid('par0'), '. Some answers have backups: no single mute pushes “alice” below ', fid('copy'), '. And muting any one layer-2 head leaves every answer here ', fid('l2'), '; those heads may matter elsewhere, or cover for each other.') : null,
-        el('p', { html: 'Where heads have nothing to fetch, those in layers 1 and 2 park their attention on the first word: the bright left column in their atlas tiles. Large models do this too, and it has a name, an <span class="term">attention sink</span>.' }),
-        el('p', { html: `Large models also grow heads with recognisable jobs: tracking the previous token, linking a verb to its object, working out which word a pronoun means. The best known are <span class="term">induction heads</span>, which find an earlier copy of the current word and attend to the word that followed it, so the model can continue a repeated pattern. L1H3 does a version of this in parrot sentences (after the parrot’s “said” it looks at <span class="hd-n">${esc(par1)}</span>) but fails on random repeated word lists.` }),
-        el('p', { html: 'So treat every name here as a hypothesis. A label summarises measurements, most heads mix several jobs, and only tests like muting show what the model actually relies on.' }),
+        eng ? el('p', {}, `Some heads have a crisp pattern, and muting one breaks the job that pattern suggests, with smaller dents elsewhere. Without ${headName(0, 3)} (L0H3), “she” falls from `, fid('she0'), ' to ', fid('she1'), ' and the model guesses ', fid('sheG'), `. Without ${headName(1, 2)} (L1H2), “the keys near the old door” is followed by `, fid('keys'), '.')
+          : el('p', {}, `Some heads have a crisp pattern: ${headName(0, 3)} (L0H3) looks from “because” to the subject a pronoun will need, and ${headName(1, 2)} (L1H2) looks back to the noun whose number the verb must match.`),
+        eng ? el('p', {}, `A blurry pattern does not mean an idle head: without ${headName(0, 1)} (L0H1), the parrot’s “red” falls to `, fid('par0'), '. Some answers have backups: no single mute pushes “alice” below ', fid('copy'), '. Muting any one layer-2 head leaves every answer here ', fid('l2'), ', and even muting all four at once keeps every answer at ', fid('l2all'), ' or more. In this small model, the last layer’s attention looks nearly idle.') : null,
+        el('p', { html: 'Heads with nothing in particular to fetch seem to park their attention on the first word, and those in layers 1 and 2 do it most: the bright left column in their atlas tiles. (The top-left cell is bright in every tile, because the first word can only look at itself.) Large models do this too, and it has a name: an <span class="term">attention sink</span>.' }),
+        el('p', { html: `Studies of larger models report heads whose patterns line up with recognisable jobs: tracking the previous token, linking a verb to its object, working out which word a pronoun means. The best known are <span class="term">induction heads</span>, which find an earlier copy of the current word and attend to the word that followed it, so the model can continue a repeated pattern. L1H3 does something like this in parrot sentences: after the parrot’s “said” it looks at <span class="hd-n">${esc(par1)}</span>, the word that followed the first “said”.` +
+          (rand ? ` On the other repeats we tried, it does not carry over. In <em>${esc(rand.text)}</em> its strongest thread goes to ${esc(q(rand.key))} (${rand.w}), and the model guesses ${esc(q(rand.top))} (${rand.p}) where a repeat would need “box”.` : '') }),
+        el('p', { html: 'So treat every name here as a hypothesis. A label sums up measurements, most heads mix several jobs, and it takes tests like muting to see what the model relies on.' }),
       );
       mtSec.appendChild(findings);
       if (mt && typeof IntersectionObserver !== 'undefined') {

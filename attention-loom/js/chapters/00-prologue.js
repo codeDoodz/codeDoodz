@@ -8,8 +8,14 @@
    out with the model's own next-word prediction, then the cloth unweaves and
    the next sentence goes on the loom.
 
-   Everything drawn is computed live from AM.model.get('tinyworld').run():
-   arcs for weights ≥ 6%, beads for a word attending to itself. */
+   Every arc and bead is computed live from AM.model.get('tinyworld').run():
+   arcs for weights ≥ 6%, beads for a head putting ≥ 10% on the word itself.
+   The shuttle, the travelling sparks and the climbing beads are decoration.
+
+   Rendering: a static "cloth" canvas (ground light, warps, layer bars, words)
+   sits under the animated canvas and fades with CSS opacity; each woven layer
+   is cached offscreen and revealed by a clip as the shuttle passes, so a frame
+   is a few blits plus a handful of sprites. */
 (() => {
   const ID = 'prologue';
   const M = AM.math;
@@ -26,7 +32,7 @@
   ];
   const THRESH = 0.06;   // weft arcs are drawn for attention weights ≥ 6%
   const KNOT_MIN = 0.1;  // a word attending ≥ 10% to itself shows as a bead on its warp
-  const GHOST = 0.22;    // the not-yet-woven pattern, faintly drawn on the cloth
+  const GHOST = 0.3;     // the not-yet-woven pattern, faintly drawn on the cloth
   const DUR = { in: 0.85, band: 1.35, swoop: 0.32, hold: 1.5, focus: 5.2, rest: 1.6, out: 1.05 };
   const WEAVE = 3 * DUR.band + 2 * DUR.swoop;
   const ORDER = ['in', 'weave', 'hold', 'focus', 'rest', 'out'];
@@ -35,43 +41,17 @@
   const smooth = M.smoothstep;
   const easeIO = M.ease.inOut;
   const easeOut = M.ease.out;
-  const outBack = M.ease.outBack;
   const pct = (w) => (w >= 0.995 ? '100%' : w < 0.005 ? '<1%' : Math.round(w * 100) + '%');
+  /** A predicted token for display: punctuation gets quotes so a lone full stop is not lost. */
+  const predText = (t) => (/^[.,]$/.test(t) ? `“${t}”` : t);
   const headName = (l, h) => `L${l}·H${h}`;
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-
-  /** Optional nickname for a head from the interpretability notes, if they are loaded. */
-  function headNick(l, h) {
-    try {
-      const N = window.AM_NOTES;
-      if (!N || !N.heads) return '';
-      const key = `L${l}H${h}`;
-      let e = Array.isArray(N.heads) ? (N.heads.find && N.heads.find((x) => x && (x.id === key || x.key === key || (x.layer === l && x.head === h)))) : N.heads[key];
-      if (!e && Array.isArray(N.heads) && Array.isArray(N.heads[l])) e = N.heads[l][h];
-      const name = e && (typeof e === 'string' ? e : (e.short || e.name || e.label));
-      return typeof name === 'string' && name.length < 40 ? name : '';
-    } catch (_) { return ''; }
-  }
+  const ORD = ['first', 'second', 'third', 'fourth', 'fifth'];
 
   // ---------------------------------------------------------------- bezier helpers
   function bezAt(P, t) {
     const u = 1 - t, a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
     return { x: a * P[0] + b * P[2] + c * P[4] + d * P[6], y: a * P[1] + b * P[3] + c * P[5] + d * P[7] };
-  }
-  /** Sub-curve of a cubic between t0 and t1 (de Casteljau). */
-  function bezSub(P, t0, t1) {
-    const split = (Q, f) => {
-      const L = (a, b) => a + (b - a) * f;
-      const x01 = L(Q[0], Q[2]), y01 = L(Q[1], Q[3]), x12 = L(Q[2], Q[4]), y12 = L(Q[3], Q[5]);
-      const x23 = L(Q[4], Q[6]), y23 = L(Q[5], Q[7]);
-      const x012 = L(x01, x12), y012 = L(y01, y12), x123 = L(x12, x23), y123 = L(y12, y23);
-      const xm = L(x012, x123), ym = L(y012, y123);
-      return [[Q[0], Q[1], x01, y01, x012, y012, xm, ym], [xm, ym, x123, y123, x23, y23, Q[6], Q[7]]];
-    };
-    let Q = P;
-    if (t1 < 1) Q = split(Q, t1)[0];
-    if (t0 > 0) Q = split(Q, t0 / t1)[1];
-    return Q;
   }
   /** Parameter t where the (x-monotonic) arc reaches x. */
   function tAtX(P, x) {
@@ -113,6 +93,8 @@
     @media (min-width: 1240px) { #ch-${ID} .pl-back { left: calc(-1 * (var(--rail-w) + var(--gutter))); } }
     #ch-${ID} .pl-back .stage-canvas { position: absolute; inset: 0; }
     #ch-${ID} .pl-back canvas { touch-action: pan-y; -webkit-tap-highlight-color: transparent; }
+    #ch-${ID} .pl-back .pl-cloth { position: absolute; left: 0; top: 0; pointer-events: none; }
+    #ch-${ID} .pl-back .pl-main { position: relative; }
     /* a soft ink scrim so the title and subtitle always read over the threads */
     #ch-${ID} .hero-inner::before {
       content: ''; position: absolute; z-index: -1; pointer-events: none;
@@ -183,7 +165,7 @@
       #ch-${ID} .hero-title { margin-top: var(--space-3); }
       #ch-${ID} .hero-inner::before { inset: -40px -16px -24px -16px; }
       #ch-${ID} .pl-space { min-height: 250px; }
-      #ch-${ID} .pl-read { font-size: 0.8125rem; min-height: 6em; }
+      #ch-${ID} .pl-read { font-size: 0.8125rem; min-height: 6.2em; }
       #ch-${ID} .pl-cue { bottom: 6px; gap: 4px; }
       #ch-${ID} .pl-cue i { height: 20px; }
     }
@@ -213,10 +195,24 @@
         label: 'Live attention threads of the tiny transformer.',
         height: () => Math.max(360, root.clientHeight),
       });
+      // the static cloth (ground light, warps, layer bars, words) lives on its own canvas
+      // underneath, drawn once per sentence and faded with CSS opacity
+      const cloth = document.createElement('canvas');
+      cloth.className = 'pl-cloth';
+      cloth.setAttribute('aria-hidden', 'true');
+      cv.wrap.insertBefore(cloth, cv.canvas);
+      cv.canvas.classList.add('pl-main');
+      let clothA = -1;
+      function setClothAlpha(a) {
+        a = a >= 0.999 ? 1 : Math.max(0, a);
+        if (Math.abs(a - clothA) < 0.004 && !(a === 1 && clothA !== 1) && !(a === 0 && clothA !== 0)) return;
+        clothA = a;
+        cloth.style.opacity = a === 1 ? '' : a.toFixed(3);
+      }
 
       const ring = el('div', {
         class: 'pl-ring', tabindex: '0', role: 'group', id: 'pl-loom',
-        'aria-label': 'The loom. Use the left and right arrow keys to inspect what each word attends to, Escape to clear.',
+        'aria-label': 'The loom. Use the left and right arrow keys (or Home and End) to inspect what each word attends to, and Escape to clear.',
       });
       const space = el('div', { class: 'pl-space' }, ring);
       const read = el('p', { class: 'pl-read', id: 'pl-read' });
@@ -256,6 +252,7 @@
           }
         }
         threads.sort((a, b) => a.w - b.w);
+        const byL = Array.from({ length: NL }, (_, l) => threads.filter((t) => t.l === l));
         const qi = r.tokens.indexOf(S.q), ki = r.tokens.indexOf(S.k);
         let focus = null;
         if (qi > 0 && ki >= 0 && ki < qi) {
@@ -268,7 +265,7 @@
           focus = { q: qi, k: ki, l: best.l, h: best.h, w: best.w, pred: top.token, pp: top.p, th: threads.find((t) => t.q === qi && t.k === ki && t.l === best.l && t.h === best.h) || null };
         }
         const preds = r.tokens.map((_, i) => model.topk(r.probs[i], 1)[0]);
-        return (cache[si] = { si, tokens: r.tokens, T, attn: r.attn, threads, knots, byQ, focus, preds });
+        return (cache[si] = { si, tokens: r.tokens, T, attn: r.attn, threads, knots, byQ, byL, focus, preds, reads: [] });
       }
 
       // ------------------------------------------------------------ state
@@ -276,11 +273,10 @@
       const st = {
         idx: 0, phase: reduced0 ? 'rest' : 'weave', pt: 0, next: null,
         auto: !reduced0, hover: -1, sel: -1, hvA: 0, hvI: -1, lastPoke: 0,
-        full: true, trail: [], lastT: 0,
+        wipe: true, trail: [], lastT: 0, outFrom: null, pauseHold: false,
       };
       let data = analyse(0);
       let G = null;            // geometry for the current sentence
-      let bg = null;           // cached warps + words for the current sentence
       let bands = [];          // cached woven layers
       let sprites = null;
       const particles = [];
@@ -327,9 +323,12 @@
         const dp = cv.dpr || 1;
         const ry0 = Math.max(0, Math.floor((loomTop - predH - 6) * dp) / dp);
         const ry1 = Math.min(cv.h, Math.ceil((Mz.bottom + 22) * dp) / dp);
+        // horizontally, everything animated stays within the content column plus room for the shuttle
+        const dx0 = Math.max(0, Math.floor((Mz.cL - 56) * dp) / dp);
+        const dx1 = Math.min(cv.w, Math.ceil((Mz.cR + 64) * dp) / dp);
         const span = Math.max(1, xs[T - 1] - xs[0]);
         const hoff = Array.from({ length: NH }, (_, h) => (h - (NH - 1) / 2) * (phone ? 2.2 : 3));
-        const geo = { phone, s, fs, labW, x0, x1, sp, xs, tw, stagger, tokH, rowGap, tokY, yb, bandH, maxLift, loomTop, predH, ry0, ry1, span, hoff, Mz, cL: Mz.cL, cR: Mz.cR };
+        const geo = { phone, s, fs, labW, x0, x1, sp, xs, tw, stagger, tokH, rowGap, tokY, yb, bandH, maxLift, loomTop, predH, ry0, ry1, dx0, dx1, span, hoff, Mz, cL: Mz.cL, cR: Mz.cR };
         // arc geometry for every thread (key → query, rising above the layer's baseline)
         for (const th of d.threads) {
           const xk = xs[th.k] + hoff[th.h], xq = xs[th.q] + hoff[th.h], y = yb[th.l];
@@ -350,17 +349,17 @@
       }
 
       // ------------------------------------------------------------ painting primitives
-      /** An offscreen layer in CSS px, reusing an old canvas element when there is one. */
-      function offscreen(old, hCss) {
+      /** An offscreen layer covering [x0, x0 + wCss] × [y0, y0 + hCss] in canvas CSS px, reusing an old canvas when there is one. */
+      function offscreen(old, x0, y0, wCss, hCss) {
         const c = old || document.createElement('canvas');
-        const W = Math.max(1, Math.round(cv.w * cv.dpr)), H = Math.max(1, Math.round(hCss * cv.dpr));
+        const W = Math.max(1, Math.round(wCss * cv.dpr)), H = Math.max(1, Math.round(hCss * cv.dpr));
         if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
         const g = c.getContext('2d');
         g.setTransform(1, 0, 0, 1, 0, 0);
         g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
         g.clearRect(0, 0, W, H);
-        g.setTransform(cv.dpr, 0, 0, cv.dpr, 0, 0);
-        return { c, g, h: hCss };
+        g.setTransform(cv.dpr, 0, 0, cv.dpr, -x0 * cv.dpr, -y0 * cv.dpr);
+        return { c, g, x0, y0, w: wCss, h: hCss };
       }
       function arcPath(g, P) { g.beginPath(); g.moveTo(P[0], P[1]); g.bezierCurveTo(P[2], P[3], P[4], P[5], P[6], P[7]); }
       /** A silk weft thread: soft glow (additive), dyed core, thin sheen on strong ones. */
@@ -403,8 +402,6 @@
         g.globalAlpha = 1;
       }
 
-      // Ground light and warp gradient are defined in canvas coordinates, so the cached
-      // loom region and the faint warps drawn directly above it join seamlessly.
       function groundGlow(g, Q) {
         const cx = (Q.x0 + Q.x1) / 2, cy = (Q.loomTop + Q.yb[0]) / 2;
         const rad = Math.max(cv.w * 0.55, 320);
@@ -425,32 +422,20 @@
         grad.addColorStop(1, AM.rgba(AM.col.linen, 0.3));
         return grad;
       }
-      function strokeWarps(g, Q, yFrom, yTo) {
-        g.beginPath();
-        Q.xs.forEach((x, i) => { const xx = Math.round(x) + 0.5; g.moveTo(xx, yFrom); g.lineTo(xx, yTo == null ? Q.tokY[i] - Q.fs * 0.95 : yTo); });
-        g.strokeStyle = warpGradient(g, Q); g.lineWidth = 1; g.stroke();
-        g.globalAlpha *= 0.35; g.lineWidth = 4; g.stroke();
-      }
-      /** Everything outside the cached loom region: the ground light and the warps hanging from above. */
-      function drawUpper(g, Q, a) {
-        if (a <= 0.004) return;
-        g.save();
-        g.globalAlpha = a;
-        g.beginPath(); g.rect(0, 0, cv.w, Q.ry0); g.rect(0, Q.ry1, cv.w, cv.h - Q.ry1); g.clip();
+      /** The static cloth for one sentence: ground light, warps hanging from the top, layer bars and labels, words. */
+      function paintCloth(d, Q) {
+        if (cloth.width !== cv.canvas.width || cloth.height !== cv.canvas.height) {
+          cloth.width = cv.canvas.width; cloth.height = cv.canvas.height;
+        }
+        cloth.style.width = cv.w + 'px';
+        cloth.style.height = cv.h + 'px';
+        const g = cloth.getContext('2d');
+        g.setTransform(1, 0, 0, 1, 0, 0);
+        g.clearRect(0, 0, cloth.width, cloth.height);
+        g.setTransform(cv.dpr, 0, 0, cv.dpr, 0, 0);
+        const phone = Q.phone;
         g.fillStyle = groundGlow(g, Q);
         g.fillRect(0, 0, cv.w, cv.h);
-        strokeWarps(g, Q, 0, Q.ry0 + 1);
-        g.restore();
-      }
-      /** The cached loom region [ry0, ry1]: ground light, heddle bars, warps, beads and words. */
-      function buildBg(d, Q, slot) {
-        const B = offscreen(slot.bg && slot.bg.c, Q.ry1 - Q.ry0);
-        B.y0 = Q.ry0;
-        const g = B.g;
-        const phone = Q.phone;
-        g.translate(0, -Q.ry0);
-        g.fillStyle = groundGlow(g, Q);
-        g.fillRect(0, Q.ry0, cv.w, Q.ry1 - Q.ry0);
         // heddle bars: one faint baseline per layer, labelled
         for (let l = 0; l < NL; l++) {
           const y = Math.round(Q.yb[l]) + 0.5;
@@ -475,10 +460,13 @@
           g.fillText(lab, near ? edge : Q.cL, y - Q.bandH * 0.42);
           if ('letterSpacing' in g) g.letterSpacing = '0px';
         }
-        // warp threads, brightest in the loom, ending in a small bead above each word
-        g.save();
-        strokeWarps(g, Q, Q.ry0 - 1, null);
-        g.restore();
+        // warp threads hanging from the top of the hero, brightest in the loom, ending in a bead above each word
+        g.beginPath();
+        Q.xs.forEach((x, i) => { const xx = Math.round(x) + 0.5; g.moveTo(xx, 0); g.lineTo(xx, Q.tokY[i] - Q.fs * 0.95); });
+        g.strokeStyle = warpGradient(g, Q);
+        g.lineWidth = 1; g.stroke();
+        g.globalAlpha = 0.35; g.lineWidth = 4; g.stroke();
+        g.globalAlpha = 1;
         Q.xs.forEach((x, i) => {
           const y = Q.tokY[i] - Q.fs * 0.95;
           g.drawImage(sprites.linen, x - 6, y - 6, 12, 12);
@@ -488,42 +476,48 @@
         g.textBaseline = 'middle';
         g.fillStyle = AM.col.linenDim;
         d.tokens.forEach((t, i) => g.fillText(t, Q.xs[i], Q.tokY[i] + 1));
-        return (slot.bg = B);
       }
 
-      function buildBands(d, Q, slot) {
-        slot.bands = Array.from({ length: NL }, (_, l) => {
-          const y0 = Math.floor(Q.yb[l] - Q.maxLift * 1.22 - 6);
-          const y1 = Math.ceil(Q.yb[l] + 10);
-          const old = slot.bands && slot.bands[l];
-          const B = offscreen(old && old.c, y1 - y0);
-          B.y0 = y0;
-          const g = B.g;
-          g.translate(0, -y0);
-          for (const th of d.threads) if (th.l === l) paintThread(g, th);
-          for (const kn of d.knots) if (kn.l === l) paintKnot(g, kn);
-          return B;
-        });
-        return slot.bands;
+      /** One woven layer, cached offscreen (cropped to the animated region). */
+      function buildBand(d, Q, slot, l) {
+        const y0 = Math.floor(Q.yb[l] - Q.maxLift * 1.22 - 6);
+        const y1 = Math.ceil(Q.yb[l] + 10);
+        if (!slot.bands) slot.bands = [];
+        const old = slot.bands[l];
+        const B = offscreen(old && old.c, Q.dx0, y0, Q.dx1 - Q.dx0, y1 - y0);
+        for (const th of d.byL[l]) paintThread(B.g, th);
+        for (const kn of d.knots) if (kn.l === l) paintKnot(B.g, kn);
+        slot.bands[l] = B;
       }
 
       function blitBand(g, B, a, squash = 1, l = 0) {
         if (a <= 0.004 || !B) return;
-        g.globalAlpha = a;
-        if (squash >= 0.999) g.drawImage(B.c, 0, B.y0, cv.w, B.h);
+        g.globalAlpha = Math.min(1, a);
+        if (squash >= 0.999) g.drawImage(B.c, B.x0, B.y0, B.w, B.h);
         else {
           const base = G.yb[l];
           const top = base - (base - B.y0) * squash;
-          g.drawImage(B.c, 0, top, cv.w, B.h * squash);
+          g.drawImage(B.c, B.x0, top, B.w, B.h * squash);
         }
         g.globalAlpha = 1;
+      }
+      /** A band blitted only left (side < 0) or right (side > 0) of x. */
+      function blitBandSide(g, B, a, x, side) {
+        if (a <= 0.004 || !B) return;
+        const L = side < 0 ? B.x0 : Math.max(B.x0, x), R = side < 0 ? Math.min(B.x0 + B.w, x) : B.x0 + B.w;
+        if (R - L < 0.5) return;
+        g.save();
+        g.beginPath(); g.rect(L, B.y0, R - L, B.h); g.clip();
+        blitBand(g, B, a);
+        g.restore();
       }
 
       // Sentences are prepared (model run, geometry, cached layers) ahead of time,
       // one stage per frame while the loom rests, so switching is only a swap.
       let geoVer = 0;
-      const slots = [{ bg: null, bands: null }, { bg: null, bands: null }];
+      const slots = [{ bands: null }, { bands: null }];
       let cur = 0;               // the slot holding the installed sentence's layers
+      const PREP_DONE = 2 + NL;
       const prep = { si: -1, ver: -1, slot: -1, stage: 0 };
       function ensureSprites() {
         if (sprites) return;
@@ -533,32 +527,35 @@
       }
       function prepare(si) {
         const slot = 1 - cur, d = analyse(si), Q = layout(d);
-        buildBg(d, Q, slots[slot]);
-        buildBands(d, Q, slots[slot]);
-        return { si, ver: geoVer, slot, stage: 3, d, G: Q };
+        for (let l = 0; l < NL; l++) buildBand(d, Q, slots[slot], l);
+        return { si, ver: geoVer, slot, stage: PREP_DONE, d, G: Q };
       }
       function stepPrep(si) {
         if (prep.si !== si || prep.ver !== geoVer || prep.slot !== 1 - cur) { prep.si = si; prep.ver = geoVer; prep.slot = 1 - cur; prep.stage = 0; }
-        if (prep.stage === 0) { prep.d = analyse(si); prep.stage = 1; }
-        else if (prep.stage === 1) { prep.G = layout(prep.d); buildBg(prep.d, prep.G, slots[prep.slot]); prep.stage = 2; }
-        else if (prep.stage === 2) { buildBands(prep.d, prep.G, slots[prep.slot]); prep.stage = 3; }
+        if (prep.stage === 0) prep.d = analyse(si);
+        else if (prep.stage === 1) prep.G = layout(prep.d);
+        else if (prep.stage < PREP_DONE) buildBand(prep.d, prep.G, slots[prep.slot], prep.stage - 2);
+        else return;
+        prep.stage++;
       }
-      const prepReady = (i) => prep.si === i && prep.ver === geoVer && prep.slot === 1 - cur && prep.stage === 3;
+      const prepReady = (i) => prep.si === i && prep.ver === geoVer && prep.slot === 1 - cur && prep.stage === PREP_DONE;
       function install(P) {
         cur = P.slot;
-        data = P.d; G = P.G; bg = slots[cur].bg; bands = slots[cur].bands;
+        data = P.d; G = P.G; bands = slots[cur].bands;
         prep.si = -1;
+        paintCloth(data, G);
         // the keyboard focus ring hugs the loom
         const sr = space.getBoundingClientRect(), cr = cv.canvas.getBoundingClientRect();
         const ox = cr.left - sr.left, oy = cr.top - sr.top;
-        const rTop = G.ry0 + G.predH * 0.25, rBot = G.Mz.bottom + 4;
+        const rTop = G.ry0 - 2, rBot = G.Mz.bottom + 4;
         ring.style.left = (G.x0 - G.labW + ox - 6) + 'px';
         ring.style.top = (rTop + oy) + 'px';
         ring.style.width = (G.x1 - G.x0 + G.labW + 12) + 'px';
         ring.style.height = (rBot - rTop) + 'px';
-        cv.canvas.setAttribute('aria-label', `The sentence “${SENTENCES[P.si].text}” as read by the live model: each word hangs as a vertical warp thread, and coloured arcs show which earlier words each of its ${NL * NH} attention heads (${NL} layers × ${NH} heads) attends to; a bead on a word’s own thread marks attention to itself. Weights under 6% are not drawn.`);
+        cv.canvas.setAttribute('aria-label', `The sentence “${SENTENCES[P.si].text}”, as read by the live model. Each word hangs as a vertical warp thread. Coloured arcs, one dye per head number, show how much attention each of the model’s ${NL * NH} heads (${NL} layers × ${NH} heads) pays from a word to each earlier word: thicker, brighter arcs carry more weight, and arc height only shows distance. Weights under 6% are not drawn. A bead on a word’s own thread marks a head putting 10% or more on the word itself.`);
         resetParticles();
-        st.full = true;
+        st.trail.length = 0;
+        st.wipe = true;
       }
       function rebuild() {
         if (!cv.w) return;
@@ -674,41 +671,33 @@
         g.restore();
       }
 
-      // ------------------------------------------------------------ the weave (live drawing of one layer)
-      function weaveBand(g, l, u, t) {
+      // ------------------------------------------------------------ the weave (one layer revealed behind the shuttle)
+      function weaveBand(g, l, u) {
+        const B = bands[l];
         const dir = l % 2 === 0 ? 1 : -1;
         const xa = G.xs[0] - G.sp * 0.5, xb = G.xs[data.T - 1] + G.sp * 0.5;
         const e = easeIO(clamp(u));
         const sx = dir > 0 ? M.lerp(xa, xb, e) : M.lerp(xb, xa, e);
-        const tips = [];
-        for (const th of data.threads) {
-          if (th.l !== l) continue;
-          const xk = th.p[0], xq = th.p[6];
-          if (dir > 0) {
-            if (sx <= xk) continue;
-            if (sx >= xq) { paintThread(g, th); continue; }
-            const tt = tAtX(th.p, sx);
-            paintThread(g, th, { P: bezSub(th.p, 0, tt) });
-            tips.push([bezAt(th.p, tt), th]);
-          } else {
-            if (sx >= xq) continue;
-            if (sx <= xk) { paintThread(g, th); continue; }
-            const tt = tAtX(th.p, sx);
-            paintThread(g, th, { P: bezSub(th.p, tt, 1) });
-            tips.push([bezAt(th.p, tt), th]);
-          }
-        }
-        for (const kn of data.knots) {
-          if (kn.l !== l) continue;
-          const passed = (sx - kn.x) * dir;
-          if (passed > 0) paintKnot(g, kn, 1, outBack(clamp(passed / 46)));
-        }
-        // needle tips riding with the shuttle
+        // behind the shuttle the layer is woven; ahead of it the pattern is still a ghost
+        blitBandSide(g, B, 1, sx, -dir);
+        blitBandSide(g, B, GHOST, sx, dir);
         g.globalCompositeOperation = 'lighter';
-        for (const [pos, th] of tips) {
+        // needle tips riding with the shuttle on every thread it is crossing
+        for (const th of data.byL[l]) {
+          if (sx <= th.p[0] || sx >= th.p[6]) continue;
+          const pos = bezAt(th.p, tAtX(th.p, sx));
           const r = G.s * (2.4 + 4 * th.w);
           g.globalAlpha = 0.5 + 0.5 * th.w;
           g.drawImage(sprites[th.h], pos.x - r, pos.y - r, r * 2, r * 2);
+        }
+        // beads (a head attending to its own word) flare as the shuttle passes
+        for (const kn of data.knots) {
+          if (kn.l !== l) continue;
+          const passed = (sx - kn.x) * dir;
+          if (passed <= 0 || passed > 60) continue;
+          const f = 1 - passed / 60, r = kn.r * (1 + 4 * f);
+          g.globalAlpha = 0.8 * f;
+          g.drawImage(sprites[kn.h], kn.x - r, kn.y - r, r * 2, r * 2);
         }
         g.globalAlpha = 1;
         g.globalCompositeOperation = 'source-over';
@@ -758,27 +747,56 @@
       // ------------------------------------------------------------ readout
       let lastRead = '';
       function setRead(html) { if (html !== lastRead) { read.innerHTML = '<span>' + html + '</span>'; lastRead = html; } }
-      const hoverWord = () => (window.matchMedia && window.matchMedia('(hover: hover)').matches ? 'Hover' : 'Tap');
-      const DEFAULT_READ = () => `Real attention from the tiny transformer on this page (${NL} layers × ${NH} heads). Each arc is a word looking back at an earlier word, in its head’s dye: ${Array.from({ length: NH }, (_, h) => `<span class="pl-hd" style="--c:${AM.headColor(h)}">H${h}</span>`).join(' ')}. Weights under 6% are not drawn. ${hoverWord()} a word.`;
+      const canHover = !!(window.matchMedia && window.matchMedia('(hover: hover)').matches);
       const W = (t) => `<span class="pl-w">${esc(t)}</span>`;
       const HD = (l, h) => `<span class="pl-hd" style="--c:${AM.headColor(h)}">${headName(l, h)}</span>`;
+      const DYES = Array.from({ length: NH }, (_, h) => `<span class="pl-hd" style="--c:${AM.headColor(h)}">H${h}</span>`).join(' ');
+      const DEFAULT_READ = `Real attention from the tiny transformer on this page, ${NL} layers × ${NH} heads, dyed by head number: ${DYES}. Each arc links a word to an earlier word it looks at; thicker means more attention. Arcs under 6% are left out. ${canHover ? 'Hover' : 'Tap'} a word.`;
+      /** A word in quotes, with "the first / second …" when the sentence repeats it. */
+      function wordRef(i) {
+        const t = data.tokens[i];
+        let n = 0, k = 0;
+        for (let j = 0; j < data.T; j++) if (data.tokens[j] === t) { if (j < i) k++; n++; }
+        return n > 1 ? `the ${ORD[k] || '#' + (k + 1)} ${W('“' + t + '”')}` : W('“' + t + '”');
+      }
+      const cap = (s) => (s.startsWith('the ') ? 'The' + s.slice(3) : s);
       function readFocus() {
         const f = data.focus;
-        if (!f) return DEFAULT_READ();
-        const nick = headNick(f.l, f.h);
-        return `At ${W('“' + data.tokens[f.q] + '”')}, head ${HD(f.l, f.h)}${nick ? ` (${esc(nick)})` : ''} puts <b>${pct(f.w)}</b> of its attention on ${W('“' + data.tokens[f.k] + '”')}. The model’s top guess for the next word: <span class="pl-pred">${esc(f.pred)}</span> <b>${pct(f.pp)}</b>.`;
+        if (!f) return DEFAULT_READ;
+        return `At ${wordRef(f.q)}, head ${HD(f.l, f.h)} puts <b>${pct(f.w)}</b> of its attention on ${wordRef(f.k)}. The model’s top guess for the next word: <span class="pl-pred">${esc(predText(f.pred))}</span> <b>${pct(f.pp)}</b>.`;
       }
       function readWord(i) {
-        const tok = data.tokens[i];
+        // narrow captions list two earlier words instead of three, so the readout keeps its height
+        const many = read.clientWidth >= 520 ? 3 : 2, key = i * 4 + many;
+        if (data.reads[key]) return data.reads[key];
         const pr = data.preds[i];
-        const tail = ` Top guess for the next word: <span class="pl-pred">${esc(pr.token)}</span> <b>${pct(pr.p)}</b>.`;
-        if (i === 0) return `${W('“' + tok + '”')} is the first word, so each of the ${NL * NH} heads can only attend to that word itself (100%).${tail}`;
-        const links = [];
-        for (let l = 0; l < NL; l++) for (let h = 0; h < NH; h++) for (let k = 0; k < i; k++) links.push({ l, h, k, w: data.attn[l][h][i][k] });
-        links.sort((a, b) => b.w - a.w);
-        const top = links.slice(0, 3).filter((x) => x.w >= 0.05);
-        if (!top.length) return `${W('“' + tok + '”')} mostly attends to itself here.${tail}`;
-        return `${W('“' + tok + '”')} looks back at ` + top.map((x) => `${W(data.tokens[x.k])} <b>${pct(x.w)}</b> ${HD(x.l, x.h)}`).join(', ') + '.' + tail;
+        const tail = ` Next-word guess: <span class="pl-pred">${esc(predText(pr.token))}</span> <b>${pct(pr.p)}</b>.`;
+        let s;
+        if (i === 0) s = `${W('“' + data.tokens[0] + '”')} is the first word. Attention only looks back, so all ${NL * NH} heads can only attend to it (100%).${tail}`;
+        else {
+          // the earlier words it looks at most, each with its strongest head and how many other heads join in
+          const keys = [];
+          for (let k = 0; k < i; k++) {
+            let best = null, n = 0;
+            for (let l = 0; l < NL; l++) for (let h = 0; h < NH; h++) {
+              const w = data.attn[l][h][i][k];
+              if (w < THRESH) continue;
+              n++;
+              if (!best || w > best.w) best = { l, h, w };
+            }
+            if (best) keys.push({ k, n, ...best });
+          }
+          keys.sort((a, b) => b.w - a.w);
+          const top = keys.slice(0, many);
+          if (!top.length) s = `From ${wordRef(i)}, no head puts 6% or more on any earlier word.${tail}`;
+          else {
+            const part = (x) => `${wordRef(x.k)} (${HD(x.l, x.h)} <b>${pct(x.w)}</b>${x.n > 1 ? `, ${x.n - 1} more head${x.n > 2 ? 's' : ''}` : ''})`;
+            const list = top.length === 1 ? part(top[0]) : top.slice(0, -1).map(part).join(', ') + ' and ' + part(top[top.length - 1]);
+            const sink = top.some((x) => x.k === 0 && x.l >= 1) ? ' Layers 1 and 2 often rest on the first word.' : '';
+            s = `${cap(wordRef(i))} looks back at ${list}.${sink}${tail}`;
+          }
+        }
+        return (data.reads[key] = s);
       }
 
       // ------------------------------------------------------------ interaction
@@ -823,24 +841,45 @@
         b.addEventListener('blur', () => read.removeAttribute('aria-live'));
       });
 
+      const RM_STEP = 9;  // reduced motion + play: seconds per sentence, switched without animation
       function setAuto(on) {
         st.auto = on;
         playBtn.innerHTML = on ? ICON_PAUSE : ICON_PLAY;
         playBtn.setAttribute('aria-label', on ? 'Pause the loom on this sentence' : 'Play: cycle through the sentences');
         playBtn.setAttribute('aria-pressed', String(!on));
         playBtn.title = on ? 'Pause' : 'Play';
+        // pausing while the cloth is unweaving keeps this sentence: it weaves back in and stays
+        if (!on && st.phase === 'out' && st.next == null) { st.next = st.idx; st.pauseHold = true; }
+        if (on && st.pauseHold) { st.next = null; st.pauseHold = false; }
+        if (on && AM.reducedMotion) st.pt = 0;
       }
       setAuto(st.auto);
 
+      /** How woven each layer is right now (null = fully), so an interrupted weave unweaves from where it was. */
+      function wovenNow() {
+        const ph = st.phase, p = st.pt;
+        if (ph === 'in') { const e = easeOut(clamp(p / DUR.in)); return { bg: e, L: Array(NL).fill(GHOST * e) }; }
+        if (ph === 'weave') {
+          return {
+            bg: 1,
+            L: Array.from({ length: NL }, (_, l) => {
+              const s0 = l * (DUR.band + DUR.swoop);
+              return p < s0 ? GHOST : p < s0 + DUR.band ? GHOST + (1 - GHOST) * easeIO((p - s0) / DUR.band) : 1;
+            }),
+          };
+        }
+        return null;
+      }
       function choose(i) {
         if (i === st.idx && st.phase !== 'out') return;
-        st.next = i;
+        pipBtns.forEach((b, j) => b.setAttribute('aria-pressed', String(j === i)));
+        st.next = i; st.pauseHold = false;
         st.sel = -1; st.hover = -1;
         if (AM.reducedMotion) { switchTo(i); st.phase = 'rest'; st.pt = 0; frame(st.lastT, 0); return; }
-        if (st.phase !== 'out') { st.phase = 'out'; st.pt = 0; st.full = true; }
+        if (st.phase !== 'out') { st.outFrom = wovenNow(); st.phase = 'out'; st.pt = 0; }
       }
       function switchTo(i) {
-        st.idx = i; st.next = null;
+        st.idx = i; st.next = null; st.outFrom = null; st.pauseHold = false;
         st.sel = -1; st.hover = -1; st.hvA = 0; st.hvI = -1;
         pipBtns.forEach((b, j) => b.setAttribute('aria-pressed', String(j === i)));
         if (!cv.w) return;
@@ -851,9 +890,14 @@
       // ------------------------------------------------------------ timeline
       function advance(dt) {
         if (AM.reducedMotion) {
-          if (st.phase !== 'rest') { st.phase = 'rest'; st.pt = 0; st.full = true; }
+          if (st.phase !== 'rest') { st.phase = 'rest'; st.pt = 0; st.outFrom = null; st.next = null; }
           const a = st.sel >= 0 ? st.sel : st.hover;
           st.hvI = a; st.hvA = a >= 0 ? 1 : 0;
+          // play: step to the next sentence every few seconds, with no animation
+          if (st.auto && a < 0) {
+            st.pt += dt;
+            if (st.pt >= RM_STEP) { st.pt = 0; switchTo((st.idx + 1) % SENTENCES.length); }
+          }
           return;
         }
         // a pinned word on a touch screen lets go after a while so the loom moves on
@@ -864,7 +908,8 @@
         st.hvA += ((act >= 0 ? 1 : 0) - st.hvA) * k;
         if (st.hvA < 0.01 && act < 0) st.hvI = -1;
         const ph = st.phase;
-        if ((ph === 'rest' || ph === 'out') && (st.auto || st.next != null)) {
+        // get the next sentence ready (one small stage per frame) while the loom is calm
+        if ((ph === 'focus' || ph === 'rest' || ph === 'out') && (st.auto || st.next != null)) {
           const ni = st.next != null ? st.next : (st.idx + 1) % SENTENCES.length;
           if (!prepReady(ni)) stepPrep(ni);
         }
@@ -874,7 +919,6 @@
         const dur = ph === 'weave' ? WEAVE : DUR[ph];
         if (st.pt >= dur) {
           st.pt = 0;
-          st.full = true;
           if (ph === 'out') { switchTo(st.next != null ? st.next : (st.idx + 1) % SENTENCES.length); st.phase = 'in'; }
           else if (ph === 'in') { st.phase = 'weave'; st.trail.length = 0; }
           else st.phase = ORDER[ORDER.indexOf(ph) + 1];
@@ -891,22 +935,20 @@
       }
 
       function render(t, dt) {
-        const { g, w, h } = cv;
-        if (!w || !G || !bg) return;
+        const { g, w } = cv;
+        if (!w || !G || !bands.length) return;
         const ph = st.phase, p = st.pt;
-        const full = st.full || ph === 'in' || ph === 'out';
-        st.full = false;
-        if (full) cv.clear();
-        else g.clearRect(0, G.ry0, w, G.ry1 - G.ry0);
+        // only the loom region is ever drawn on this canvas; the cloth canvas below holds the rest
+        if (st.wipe) { cv.clear(); st.wipe = false; }
+        else g.clearRect(G.dx0, G.ry0, G.dx1 - G.dx0, G.ry1 - G.ry0);
+        g.save();
+        g.beginPath(); g.rect(G.dx0, G.ry0, G.dx1 - G.dx0, G.ry1 - G.ry0); g.clip();
 
-        // background: warps and words
+        const OF = ph === 'out' ? st.outFrom : null;
         let bgA = 1;
         if (ph === 'in') bgA = easeOut(clamp(p / DUR.in));
-        if (ph === 'out') bgA = 1 - smooth(0.3, 1, p / DUR.out);
-        if (full) drawUpper(g, G, bgA);
-        g.globalAlpha = bgA;
-        g.drawImage(bg.c, 0, bg.y0, w, bg.h);
-        g.globalAlpha = 1;
+        if (ph === 'out') bgA = (OF ? OF.bg : 1) * (1 - smooth(0.3, 1, p / DUR.out));
+        setClothAlpha(bgA);
 
         const act = st.hvI;
         const hvA = act >= 0 ? st.hvA : 0;
@@ -923,9 +965,8 @@
             const s0 = l * (DUR.band + DUR.swoop);
             if (p < s0) blitBand(g, B, GHOST);
             else if (p < s0 + DUR.band) {
-              blitBand(g, B, GHOST);
               const u = (p - s0) / DUR.band;
-              shuttle = weaveBand(g, l, u, t); shuttleL = l;
+              shuttle = weaveBand(g, l, u); shuttleL = l;
               reedA = Math.sin(Math.PI * clamp(u));
             } else {
               // a layer just finished: bloom once, then settle into the breathing cloth
@@ -935,9 +976,11 @@
               if (flash > 0.01) { g.globalCompositeOperation = 'lighter'; blitBand(g, B, flash); g.globalCompositeOperation = 'source-over'; }
             }
           } else if (ph === 'out') {
+            // layers flatten into their baselines from the top down, starting from however woven they were
             const q = clamp((p - (NL - 1 - l) * 0.12) / (DUR.out - 0.3));
             const e = easeIO(q);
-            blitBand(g, B, (1 - e) * breath(l, t), 1 - 0.88 * e, l);
+            const base = OF ? OF.L[l] : 1;
+            blitBand(g, B, (1 - e) * base * (base >= 0.999 ? breath(l, t) : 1), 1 - 0.88 * e, l);
           } else blitBand(g, B, breath(l, t) * dim);
         }
         // swoop between layers
@@ -955,7 +998,7 @@
           }
         }
 
-        // the residual stream: slow beads of light climbing each warp through the layers
+        // decoration: slow beads of light climbing each warp through the layers
         if (!AM.reducedMotion && ph !== 'in' && ph !== 'out') {
           g.globalCompositeOperation = 'lighter';
           const yTop = G.loomTop - G.bandH * 0.1;
@@ -972,8 +1015,8 @@
           g.globalCompositeOperation = 'source-over';
         }
 
-        // particles: information carried along the threads
-        const woven = ph === 'hold' || ph === 'focus' || ph === 'rest' || ph === 'out';
+        // sparks travelling along the threads, from the earlier word to the later one, more often on strong ones
+        const woven = ph === 'hold' || ph === 'focus' || ph === 'rest' || (ph === 'out' && !OF);
         if (!AM.reducedMotion && woven) {
           let pa = 1;
           if (ph === 'hold') pa = smooth(0, 0.8, p);
@@ -981,7 +1024,7 @@
           drawParticles(g, dt, pa * (1 - 0.5 * fe), act >= 0 && hvA > 0.05 ? act : -1);
         }
 
-        // focus: one thread picked out, with the prediction it supports
+        // focus: one thread picked out, next to the model's prediction at that word
         if (fe > 0.01 && data.focus) {
           const f = data.focus, col = AM.headColor(f.h);
           const pulse = AM.reducedMotion ? 1 : 0.85 + 0.15 * Math.sin(t * 3.2);
@@ -1003,7 +1046,7 @@
           }
           wordGlow(g, f.k, col, fe, false);
           wordGlow(g, f.q, AM.dye.weld, fe, true);
-          drawPred(g, f.q, f.pred, f.pp, fe);
+          drawPred(g, f.q, predText(f.pred), f.pp, fe);
         }
 
         // inspecting one word: its threads to earlier words, its beads, its prediction
@@ -1017,16 +1060,17 @@
           for (const [k, th] of best) wordGlow(g, k, AM.headColor(th.h), hvA * (0.45 + 0.55 * th.w));
           wordGlow(g, act, AM.dye.weld, hvA, true);
           const pr = data.preds[act];
-          drawPred(g, act, pr.token, pr.p, hvA);
+          drawPred(g, act, predText(pr.token), pr.p, hvA);
         }
 
         if (shuttle && !AM.reducedMotion) drawShuttle(g, shuttle, shuttleL, reedA);
+        g.restore();
 
         // words for the readout
         if (act >= 0 && st.hvA > 0.5) setRead(readWord(act));
         else if (ph === 'focus' && fe > 0.05) setRead(readFocus());
-        else if (st.phase === 'rest' && AM.reducedMotion && data.focus) setRead(readFocus());
-        else setRead(DEFAULT_READ());
+        else if (ph === 'rest' && AM.reducedMotion && data.focus) setRead(readFocus());
+        else setRead(DEFAULT_READ);
       }
 
       // ------------------------------------------------------------ lifecycle
@@ -1038,7 +1082,7 @@
           pending = requestAnimationFrame(() => { pending = 0; if (cv.w) { cv.resize(); rebuild(); render(st.lastT, 0); } });
         }).observe(space);
       }
-      ctx.onVisible(() => { st.full = true; });
+      ctx.onVisible(() => { st.wipe = true; });
       ctx.loop((t, dt) => frame(t, dt));
     },
   });
