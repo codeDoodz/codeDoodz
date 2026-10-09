@@ -122,7 +122,7 @@
   const GELU_PROMPTS = [{ text: 'the cat says', ans: 'meow' }, { text: 'the sky is', ans: 'blue' }, { text: 'the capital of spain is', ans: 'madrid' }];
 
   /** Head name, preferring the interpretability notes (AM_NOTES) when they are loaded. */
-  const HEAD_NAMES = { L0H2: 'the Name Finder', L1H3: 'the Colour Matcher' };
+  const HEAD_NAMES = { L0H2: 'the fact finder', L1H3: 'the colour binder' }; // same fallbacks as chapter 05
   function headName(l, h) {
     const key = `L${l}H${h}`;
     try {
@@ -246,7 +246,7 @@
       if (o.chain) chain.push(probs);
       return { probs, chain, acts, mids, final: X[T - 1], attnLast };
     }
-    return { run, lens, pre, ln2, mlpOut, valueLogits, sigma, gelu, ACT, C, d, F, V, NL };
+    return { run, lens, pre, ln2, mlpOut, valueLogits, sigma, gelu, ACT, C, d, F, V, NL, wproj: (l) => Ls[l].wproj };
   }
 
   // ==================================================================== hero data (live)
@@ -291,6 +291,16 @@
     }
     if (!N) { N = 10; silenced = probsWith(new Set(byAct.slice(0, N))); }
     const write = E.mlpOut(L, act);
+    // does silencing any ONE neuron change the answer? (exact: remove that neuron's row from the write)
+    let singleFlips = 0;
+    {
+      const wp = E.wproj(L), d = x.length, xx = new Float64Array(d);
+      for (let i = 0; i < F; i++) {
+        if (act[i] === 0) continue;
+        for (let j = 0; j < d; j++) xx[j] = x[j] + write[j] - act[i] * wp[i * d + j];
+        if (argmax(E.lens(xx)) !== ans) singleFlips++;
+      }
+    }
     // parity of the exact last-layer recomposition against the model's own output
     const recomposed = probsWith(new Set());
     let parity = 0; for (let k = 0; k < after.length; k++) parity = Math.max(parity, Math.abs(recomposed[k] - after[k]));
@@ -299,7 +309,7 @@
     return {
       prompt, tokens: r.tokens, T, L, ans, rival, ansTok: m.vocab[ans], rivalTok: m.vocab[rival],
       act, pre, lnx, write, before, after, silenced, N, silSet: new Set(byAct.slice(0, N)), byAct,
-      top: contrib.slice(0, 6), total, nNeg, nFire, parity, actsAll, vocab: m.vocab,
+      top: contrib.slice(0, 6), total, nNeg, nFire, parity, actsAll, vocab: m.vocab, singleFlips,
     };
   }
 
@@ -333,7 +343,7 @@
 
     /* the bend */
     #ch-${ID} .gl-grid { display: grid; grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr); gap: clamp(24px, 4vw, 56px); align-items: start; }
-    #ch-${ID} .gl-canvas canvas { cursor: ew-resize; border-radius: var(--radius-sm); }
+    #ch-${ID} .gl-canvas canvas { cursor: ew-resize; border-radius: var(--radius-sm); touch-action: pan-y; }
     #ch-${ID} .gl-canvas canvas:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
     #ch-${ID} .gl-read { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); }
     #ch-${ID} .gl-tile { display: grid; gap: 2px; padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); border: 1px solid var(--rule); background: var(--ink); min-width: 0; }
@@ -366,6 +376,7 @@
     #ch-${ID} .fx-result b { color: var(--linen); font-weight: 600; }
     #ch-${ID} .fx-result .mv-riv, #ch-${ID} .fx-result .mv-ans { font-weight: 600; }
     @media (max-width: 900px) { #ch-${ID} .fx-grid { grid-template-columns: minmax(0, 1fr); } }
+    @media (max-width: 440px) { #ch-${ID} .fx-panel .seg button { padding: 5px 8px; letter-spacing: 0; } }
 
     /* memory vs context */
     #ch-${ID} .ct-panel { display: grid; gap: var(--space-4); }
@@ -455,8 +466,10 @@
       const focusX = new Array(T);
       focusX[T - 1] = cx;
       for (let t = T - 2; t >= 0; t--) focusX[t] = focusX[t + 1] - (tw[t + 1] + tw[t]) / 2 - (phone ? 8 : 12);
-      const miniR = Math.min((w / T) * 0.45, phone ? 62 : 104);
-      const miniAy = Math.round(Math.min(tokY - 90, topPad + miniR + (phone ? 46 : 84)));
+      const miniR = Math.min((w / T) * 0.46, phone ? 62 : 108);
+      // centre the row of little fans (label included) between the readout and the tokens
+      const blockH = miniR + (phone ? 20 : 24), top = topPad + (phone ? 14 : 18), bot = tokY - (phone ? 62 : 84);
+      const miniAy = Math.round(top + Math.max(0, bot - top - blockH) / 2 + blockH);
       return {
         w, h, phone, topPad, oy, arcTop, tokY, R, cx, ay, beads, pours, spreadX, focusX, tokSize, miniR, miniAy,
         bead: phone ? 1.55 : 2.1, beadMax: phone ? 3.6 : 4.8,
@@ -495,17 +508,20 @@
     function setStep(i) {
       stepNow = i;
       const T = st.tgt;
-      T.focus = i >= 1 ? 1 : 0;
-      T.open = i >= 1 ? 1 : 0;
-      T.bend = i >= 2 ? 1 : 0;
-      T.pour = i >= 3 ? 1 : (T.silence > 0.5 ? 1 : 0);
+      // with the silence switch on, the open vault stays on screen at every step, so the
+      // picture always matches the "silenced" readout
+      const sil = T.silence > 0.5;
+      T.focus = i >= 1 || sil ? 1 : 0;
+      T.open = i >= 1 || sil ? 1 : 0;
+      T.bend = i >= 2 || sil ? 1 : 0;
+      T.pour = i >= 3 || sil ? 1 : 0;
       T.label = i >= 4 ? 1 : 0;
       if (AM.reducedMotion) Object.assign(st, { focus: T.focus, open: T.open, bend: T.bend, pour: T.pour, label: T.label });
     }
     function setSilence(on) {
       st.tgt.silence = on ? 1 : 0;
-      if (on) { st.tgt.pour = 1; st.tgt.focus = 1; st.tgt.open = 1; st.tgt.bend = 1; } else setStep(stepNow);
-      if (AM.reducedMotion) Object.assign(st, { silence: st.tgt.silence, pour: st.tgt.pour, focus: st.tgt.focus, open: st.tgt.open, bend: st.tgt.bend });
+      setStep(stepNow);
+      if (AM.reducedMotion) st.silence = st.tgt.silence;
     }
     function setData(h2) {
       H = h2; parts.length = 0; xparts.length = 0; motes.length = 0;
@@ -615,8 +631,9 @@
         const { s, col } = beadStyle(v);
         const silenced = opts.silence > 0.02 && H.silSet.has(i);
         const sil = silenced ? opts.silence : 0;
-        const base = Lo.bead * Math.max(0.5, scale);
-        const r = (base + s * (Lo.beadMax - Lo.bead) * Math.max(0.5, scale)) * (1 - 0.45 * sil);
+        const bs = Math.max(0.62, scale); // the little step-1 fans keep readable beads
+        const base = Lo.bead * bs;
+        const r = (base + s * (Lo.beadMax - Lo.bead) * bs) * (1 - 0.45 * sil);
         // the empty socket
         g.fillStyle = rgba(AM.col.ruleStrong, 0.55 * a);
         g.beginPath(); g.arc(x, y, Math.max(0.7, base * 0.7), 0, 6.283); g.fill();
@@ -752,6 +769,8 @@
       }
 
       drawFan(g, cx, ay, R, vals, 1, { open: OP, silence: st.silence });
+      // leader threads for the labels go under the knot's barcode
+      if (st.label > 0.01) drawLabels(g, 'lines');
 
       // pour particles
       if (!AM.reducedMotion) {
@@ -770,7 +789,7 @@
         glow(g, GOLD, cx + Math.cos(sp.a) * sp.v * e, oy + Math.sin(sp.a) * sp.v * e * 0.6, phone ? 3.5 : 4.5, 0.9 * (1 - sp.t));
       }
       // labels for the strongest writers
-      if (st.label > 0.01) drawLabels(g);
+      if (st.label > 0.01) drawLabels(g, 'boxes');
       // dimension notes
       if (OP > 0.6) {
         const a = clamp((OP - 0.6) / 0.4, 0, 1) * (1 - st.label * 0.6);
@@ -879,14 +898,15 @@
       return wsCache.v;
     }
 
-    function drawLabels(g) {
+    /** pass 'lines': leader threads and bead rings (drawn under the barcode); pass 'boxes': the label boxes and header. */
+    function drawLabels(g, pass) {
       const { w, phone, ay, cx, mono } = Lo;
       const K = phone ? 3 : 5;
       const items = H.top.slice(0, K).map((c) => ({ ...c, b: Lo.beads[c.i] }));
       const left = items.filter((it) => it.b.x <= cx).sort((a, b) => a.b.y - b.b.y);
       const right = items.filter((it) => it.b.x > cx).sort((a, b) => a.b.y - b.b.y);
       const a = st.label;
-      const y0 = ay + (phone ? 48 : 62), dy = phone ? 21 : 24;
+      const y0 = ay + (phone ? 48 : 76), dy = phone ? 21 : 24;
       const place = (arr, side) => arr.forEach((it, k) => {
         const lx = side < 0 ? 6 : w - 6;
         const ly = y0 + k * dy;
@@ -899,21 +919,33 @@
         const bx = side < 0 ? lx : lx - tw - 12;
         g.save();
         g.globalAlpha = a;
-        // leader thread from the bead to the label
-        const ex = side < 0 ? bx + tw + 12 : bx;
-        g.strokeStyle = rgba(GOLD, 0.45); g.lineWidth = 0.9;
-        g.beginPath(); g.moveTo(it.b.x, it.b.y); g.bezierCurveTo(it.b.x, it.b.y + 30, ex + side * -24, ly, ex, ly); g.stroke();
-        g.strokeStyle = GOLD; g.lineWidth = 1.2;
-        g.beginPath(); g.arc(it.b.x, it.b.y, Lo.beadMax + 2.5, 0, 6.283); g.stroke();
-        g.fillStyle = rgba(AM.col.ink, 0.92);
-        D.roundRect(g, bx, ly - 9, tw + 12, 18, 5); g.fill();
-        g.strokeStyle = rgba(GOLD, 0.35); g.lineWidth = 1; g.stroke();
-        let xx = bx + 6;
-        parts2.forEach(([s, c], j) => { D.text(g, s, xx, ly + 3.5, { role: 'mono', size: mono, color: c }); xx += widths[j]; });
+        if (pass === 'lines') {
+          // leader thread from the bead to the label
+          const ex = side < 0 ? bx + tw + 12 : bx;
+          g.strokeStyle = rgba(GOLD, 0.45); g.lineWidth = 0.9;
+          g.beginPath(); g.moveTo(it.b.x, it.b.y); g.bezierCurveTo(it.b.x, it.b.y + 30, ex + side * -24, ly, ex, ly); g.stroke();
+          g.strokeStyle = GOLD; g.lineWidth = 1.2;
+          g.beginPath(); g.arc(it.b.x, it.b.y, Lo.beadMax + 2.5, 0, 6.283); g.stroke();
+        } else {
+          g.fillStyle = rgba(AM.col.ink, 0.92);
+          D.roundRect(g, bx, ly - 9, tw + 12, 18, 5); g.fill();
+          g.strokeStyle = rgba(GOLD, 0.35); g.lineWidth = 1; g.stroke();
+          let xx = bx + 6;
+          parts2.forEach(([s, c], j) => { D.text(g, s, xx, ly + 3.5, { role: 'mono', size: mono, color: c }); xx += widths[j]; });
+        }
         g.restore();
       });
       place(left, -1); place(right, 1);
-      if (!phone) D.text(g, `top ${K} writers · direct effect on the final scores (logits)`, 6, y0 - 17, { role: 'mono', size: mono - 0.5, color: AM.col.mist, alpha: a });
+      if (!phone && pass !== 'lines') {
+        // header, kept clear of the stream thread at the centre
+        const hs = mono - 0.5, l1 = `top ${K} writers · direct effect`, l2 = 'on the final scores (logits)';
+        const one = `${l1} ${l2}`;
+        if (6 + D.measure(g, one, hs, 'mono') < cx - 14) D.text(g, one, 6, y0 - 18, { role: 'mono', size: hs, color: AM.col.mist, alpha: a });
+        else {
+          D.text(g, l1, 6, y0 - 29, { role: 'mono', size: hs, color: AM.col.mist, alpha: a });
+          D.text(g, l2, 6, y0 - 17, { role: 'mono', size: hs, color: AM.col.mist, alpha: a });
+        }
+      }
     }
 
     function probsFor(key) { return key === 'before' ? H.before : key === 'after' ? H.after : H.silenced; }
@@ -997,7 +1029,7 @@
     const F = (fn, x) => E.ACT[fn](x);
     const cv = ctx.canvas(hosts.canvas, {
       label: 'GELU curve explorer',
-      height: (w) => Math.round(clamp(w * 0.66, 262, 340)),
+      height: (w) => Math.round(clamp(w * 0.66, 284, 344)),
     });
     cv.canvas.tabIndex = 0;
     cv.canvas.setAttribute('role', 'slider');
@@ -1009,7 +1041,7 @@
       const phone = w < 460;
       const padL = phone ? 30 : 38, padR = 12, padT = 14;
       const histH = phone ? 52 : 62;
-      const axisY = h - histH - (phone ? 26 : 30);
+      const axisY = h - histH - (phone ? 34 : 36); // room for the tick labels above the histogram's own label
       // y range [-1, 4] over [padT, axisY + something]; x range [-4, 4]
       const x0 = padL, x1 = w - padR;
       const yTop = padT, yBot = axisY;
@@ -1200,12 +1232,9 @@
         g.fillStyle = rgba(col, 0.85);
         for (let yy = yBot - 2; yy >= top; yy -= 3) g.fillRect(x - bw / 2, yy, bw, 1.4);
         g.fillStyle = col; g.fillRect(x - bw / 2, top, bw, 1.6);
-        if (k === jk) {
-          glow(g, GOLD, x, top, bw * 1.4, 0.8);
-          D.text(g, `+${Math.round(jv * 100)}`, x + bw / 2 + 2, top - 4, { role: 'mono', size: mono, color: GOLD });
-        }
+        if (k === jk) glow(g, GOLD, x, top, bw * 1.4, 0.8);
         // value + the lens's top word at this stage
-        D.text(g, pct(pc[k]).replace('<0.1%', '0%'), x, Math.min(top, yBot) - (k === jk ? 16 : 5), { role: 'mono', size: mono, color: k === 0 ? AM.col.mist : AM.col.linen, align: 'center' });
+        D.text(g, pct(pc[k]).replace('<0.1%', '0%'), x, Math.max(yTop - 5, Math.min(top, yBot) - 5), { role: 'mono', size: mono, color: k === 0 ? AM.col.mist : AM.col.linen, align: 'center' });
         const tw = m.vocab[argmax(cur.chain[k])];
         D.text(g, tw.length > 8 ? tw.slice(0, 7) + '…' : tw, x, 34 + (phone ? 0 : 1), { role: 'mono', size: mono, color: tw === fact.ans ? GOLD : AM.col.linenDim, align: 'center' });
         D.text(g, STAGES[k], x, yBot + 14, { role: 'mono', size: mono, color: col === BLUE ? AM.mix(BLUE, AM.col.linen, 0.3) : col === GOLD ? GOLD : AM.col.mist, align: 'center' });
@@ -1219,6 +1248,20 @@
       pathTops(); g.stroke();
       g.strokeStyle = rgba(GOLD, 0.7); g.lineWidth = 1.2; pathTops(); g.stroke();
       g.restore();
+      // the biggest MLP jump, labelled on the rising thread between the two bars
+      if (jk > 0) {
+        // kept above the low bars' value labels, which sit just above the baseline
+        const lx = xs[jk] - colW / 2;
+        let ly = Math.min((sy(pc[jk - 1]) + sy(pc[jk])) / 2, yBot - 26);
+        const txt = `+${Math.round(jv * 100)}`, tw = D.measure(g, txt, mono, 'mono') + 8;
+        // on narrow ladders the pill can reach the jumped bar's own value label: lift it above
+        const vw = D.measure(g, pct(pc[jk]), mono, 'mono') / 2, valY = Math.max(yTop - 5, Math.min(sy(pc[jk]), yBot) - 5) - 4;
+        if (lx + tw / 2 > xs[jk] - vw - 2 && Math.abs(ly - valY) < 14) ly = valY - 16;
+        g.fillStyle = rgba(AM.col.ink, 0.94);
+        D.roundRect(g, lx - tw / 2, ly - 8, tw, 15, 4); g.fill();
+        g.strokeStyle = rgba(GOLD, 0.55); g.lineWidth = 1; g.stroke();
+        D.text(g, txt, lx, ly + 3, { role: 'mono', size: mono, color: GOLD, align: 'center' });
+      }
       lad.canvas.setAttribute('aria-label', `Logit lens for “${fact.text}”: probability of “${fact.ans}” after each stage: ${STAGES.map((s, k) => `${s}${k ? ' ' + Math.floor((k - 1) / 2) : ''} ${pct(pc[k])}`).join(', ')}.`);
     }
 
@@ -1303,6 +1346,7 @@
     let chips = null;
     const chipHost = AM.el('div');
     const catSeg = AM.ui.segmented({ id: 'mv-fx-cat', label: 'Fact type', options: FACT_SETS.map((s, i) => ({ value: i, label: s.label })), value: 0, onChange: (v) => { st.set = v; st.item = 0; renderChips(); clearAll(false); } });
+    // a new fact clears the silenced neurons (they are fact-specific) but keeps the head mute; Reset clears both
     function renderChips() {
       chipHost.innerHTML = '';
       chips = AM.ui.tokens(FACT_SETS[st.set].items.map((it) => it.chip), { selected: st.item, label: 'Fact', onSelect: (i) => { st.item = i; clearAll(false); } });
@@ -1315,7 +1359,7 @@
     const layerSeg = AM.ui.segmented({ id: 'mv-fx-layer', label: 'Silence in', options: MM.range(NL).map((l) => ({ value: l, label: `layer ${l}` })), value: 0, onChange: (v) => { st.layer = v; syncSlider(); drawWalls(); } });
     const slider = AM.ui.slider({
       id: 'mv-fx-k', label: 'Brightest neurons silenced', min: 0, max: F, step: 1, value: 0,
-      format: (v) => (v >= F ? `all ${F}` : String(v)),
+      format: (v) => (v >= F ? 'all' : String(v)),
       onInput: (v) => {
         const order = Array.from(base.acts[st.layer].keys()).sort((a, b) => base.acts[st.layer][b] - base.acts[st.layer][a]);
         st.sil[st.layer] = new Set(order.slice(0, v));
@@ -1326,9 +1370,9 @@
     const resetB = AM.ui.button({ id: 'mv-fx-reset', label: 'Reset', onClick: () => clearAll(true) });
     hosts.ctl.append(layerSeg.el, slider.el, muteT.el, resetB);
     function syncSlider() { slider.set(st.sil[st.layer].size); }
-    function clearAll(keep) {
+    function clearAll(all) {
       st.sil = MM.range(NL).map(() => new Set());
-      if (!keep) { st.mute = false; muteT.set(false); }
+      if (all) muteT.set(false);
       st.mute = muteT.get();
       syncSlider();
       refresh();
@@ -1358,7 +1402,8 @@
         const sil = [];
         st.sil.forEach((s, l) => { if (s.size) sil.push(s.size >= F ? `all of layer ${l}'s MLP` : `${s.size} neuron${s.size > 1 ? 's' : ''} in layer ${l}`); });
         const parts = [];
-        if (sil.length) parts.push(`${sil.join(' and ')} silenced at the last word`);
+        const list = (a) => (a.length < 2 ? a.join('') : `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}`);
+        if (sil.length) parts.push(`${list(sil)} silenced at the last word`);
         if (st.mute) parts.push(`${headName(0, 2)} muted`);
         const verdict = top === ans
           ? `still says <span class="mv-ans">${esc(fact.ans)}</span> (<span class="mv-n">${pct(pNow)}</span>)`
@@ -1439,7 +1484,10 @@
         g.beginPath(); g.moveTo(sx - 6, sy - 6); g.lineTo(sx + 6, sy + 6); g.moveTo(sx + 6, sy - 6); g.lineTo(sx - 6, sy + 6); g.stroke();
       }
       toks.forEach((s, i) => {
-        D.token(g, s, row[i].cx, ty, { size: size * Math.min(1, row[i].scale + 0.08), padX: phone ? 4 : 6, padY: phone ? 4 : 5, selected: i === T - 1, underline: dyes[s] || null, radius: 5 });
+        const ts = Math.max(6, size * Math.min(1, row[i].scale + 0.08)), px = phone ? 4 : 6;
+        // D.token's colour underline needs a chip wider than 14px (it can be narrower mid-resize)
+        const wide = D.measure(g, s, ts, 'body', 600) + 2 * px > 18;
+        D.token(g, s, row[i].cx, ty, { size: ts, padX: px, padY: phone ? 4 : 5, selected: i === T - 1, underline: wide ? dyes[s] || null : null, radius: 5 });
       });
       D.text(g, phone ? `${headName(1, 3)} at “is”` : `${headName(1, 3)} (L1H3) at “is”`, 4, 14, { role: 'mono', size: phone ? 8 : 9, color: HC });
       cv.canvas.setAttribute('aria-label', `“${text}”. Attention of ${headName(1, 3)} (layer 1, head 3) from the last word: ${toks.slice(0, -1).map((s, j) => `${s} ${d.attn[j].toFixed(2)}`).filter((_, j) => d.attn[j] > 0.05).join(', ')}.`);
@@ -1459,7 +1507,9 @@
       const dm = dataFor(s.mem, false), dc = dataFor(s.ctxs, false);
       const dmM = dataFor(s.mem, true), dcM = dataFor(s.ctxs, true);
       const colIdxC = dc.tokens.indexOf(c, 3), colIdxM = dm.tokens.indexOf(c, 3);
-      hosts.mem.note.innerHTML = `You told it the sky is <b>${c}</b>. It answers <b>${esc(m.vocab[argmax(dm.probs)])}</b> anyway. The head gives the word “${c}” only <span class="mv-n">${dm.attn[colIdxM].toFixed(2)}</span> of its attention. Muted: <b>${esc(m.vocab[argmax(dmM.probs)])}</b> <span class="mv-n">${pct(dmM.probs[argmax(dmM.probs)])}</span>.`;
+      const said = m.vocab[argmax(dm.probs)];
+      const lead = said === c ? `You told it the sky is <b>${c}</b>, which matches what it remembers. It answers <b>${esc(said)}</b>.` : `You told it the sky is <b>${c}</b>. It answers <b>${esc(said)}</b> anyway.`;
+      hosts.mem.note.innerHTML = `${lead} The head gives the word “${c}” only <span class="mv-n">${dm.attn[colIdxM].toFixed(2)}</span> of its attention. Muted: <b>${esc(m.vocab[argmax(dmM.probs)])}</b> <span class="mv-n">${pct(dmM.probs[argmax(dmM.probs)])}</span>.`;
       hosts.ctxs.note.innerHTML = `The box's colour is only in the sentence. The head puts <span class="mv-n">${dc.attn[colIdxC].toFixed(2)}</span> of its attention on “${c}”. Muted: <b>${esc(m.vocab[argmax(dcM.probs)])}</b> <span class="mv-n">${pct(dcM.probs[argmax(dcM.probs)])}</span>, and ${c} gets <span class="mv-n">${pct(dcM.probs[m.tokenId(c)])}</span>.`;
     }
     const sw = AM.ui.tokens(BIND_COLOURS, { selected: st.colour, label: 'Colour in the sentence', colors: (i) => COLOUR_DYE()[BIND_COLOURS[i]], onSelect: (i) => { st.colour = i; refresh(); } });
@@ -1539,7 +1589,7 @@
       const silN = [el('span', {}, String(H.N)), el('span', {}, String(H.N))];
       const silLabel = el('span', {}, el('span', { class: 'mv-long' }, 'Silence the brightest ', silN[0]), el('span', { class: 'mv-short' }, 'Silence top ', silN[1]));
       const silT = ui.toggle({ id: 'mv-hero-silence', label: silLabel, checked: false, onChange: (b) => vault && vault.setSilence(b) });
-      const capText = 'Live model: tinyworld, the last of its three layers. Bead brightness is each neuron\'s real input (then output) for the chosen word; gold is positive, red negative. Every neuron reads all 64 numbers, drawn as one thread each. Labels give each neuron\'s exact direct effect on the final scores. The fan layout itself is an illustration.';
+      const capText = 'Live model: tinyworld, the last of its three layers. Bead brightness is each neuron\'s real input (then output) for the chosen word; gold is positive, red negative. Every neuron reads all 64 numbers; one thread per neuron stands for those 64 connections. Labels give each neuron\'s exact direct effect on the final scores (output bias left out). The fan layout itself is an illustration.';
       const stage = el('div', { class: 'ch-stage mv-stage' },
         el('figure', { class: 'fig' },
           el('div', { class: 'fig-top' },
@@ -1584,7 +1634,7 @@
           label: '3 · Bend',
           h3: 'GELU: most neurons go quiet',
           ps: [
-            'Every one of those numbers then passes through a curve called <span class="term">GELU</span>. Negative inputs come out close to zero. Positive inputs pass almost unchanged.',
+            'Every one of those numbers then passes through a curve called <span class="term">GELU</span>. Negative inputs come out close to zero. Large positive inputs pass almost unchanged.',
             `For “${esc(H.tokens[H.T - 1])}”, ${n(H.nNeg)} of the ${C.d_ff} inputs are negative, so those neurons fall silent. Only ${n(H.nFire)} fire above 0.5. The word has picked out a few dozen neurons.`,
           ],
         }),
@@ -1611,7 +1661,7 @@
           h3: 'Take a few away',
           ps: [
             `Now zero the ${n(H.N)} brightest neurons, at this word only, and keep the rest of the MLP as it was.`,
-            `The model ${argmax(H.silenced) === argmax(H.before) ? 'goes back to' : 'now says'} ${R(H.vocab[argmax(H.silenced)])} (${n(pct(H.silenced[argmax(H.silenced)]))}). No single neuron holds the fact. A small team of them does. The switch under the picture repeats the experiment at any step.`,
+            `The model ${argmax(H.silenced) === argmax(H.before) ? 'goes back to' : 'now says'} ${R(H.vocab[argmax(H.silenced)])} (${n(pct(H.silenced[argmax(H.silenced)]))}). ${H.singleFlips === 0 ? `No single neuron holds the fact: silencing any one of the ${C.d_ff} leaves ${A(H.ansTok)} on top. It takes several together.` : `It takes several neurons together; only ${H.singleFlips} of the ${C.d_ff} can change the answer on their own.`} The switch under the picture repeats the experiment at any step.`,
           ],
         }),
       ];
@@ -1650,10 +1700,10 @@
             el('span', { class: 'mv-kicker' }, 'The bend'),
             el('h3', { id: 'mv-gl-h' }, 'Why the curve matters'),
             el('p', { html: '<span class="term">GELU</span> (Gaussian Error Linear Unit) is <span class="math">GELU(x) = x · Φ(x)</span>, where Φ(x) is the chance that a standard normal number is below x. Large positive inputs pass through, large negative ones become 0, and near zero it bends smoothly, dipping to −0.17. Our model uses the usual tanh approximation of Φ.' }),
-            el('p', { html: 'Without a bend, two matrix multiplications are just one: <span class="math">(h·W<sub>in</sub>)·W<sub>out</sub> = h·(W<sub>in</sub>W<sub>out</sub>)</span>. The whole MLP would shrink to a single 64 × 64 matrix, and stacking more of them would add nothing new. With the bend, each neuron becomes a switch that writes only when its key matches.' }),
-            el('p', { html: 'Try it on the real model. <span class="term">ReLU</span>, the sharper max(0, x) of the original Transformer, gives the same answers here. A straight line breaks them: ' }, glNone, ' Many recent models, LLaMA among them, use a gated variant called SwiGLU.')),
+            el('p', { html: 'Without a bend, two matrix multiplications are just one: <span class="math">(x·W<sub>in</sub>)·W<sub>out</sub> = x·(W<sub>in</sub>W<sub>out</sub>)</span>. The whole MLP would shrink to a single 64 × 64 matrix (plus a bias), and stacking more of them would add nothing new. With the bend, each neuron acts roughly like a switch that writes only when its key matches.' }),
+            el('p', { html: 'Try it on the real model. <span class="term">ReLU</span>, the sharper max(0, x) of the original Transformer, gives the same answers here. A straight line does not: ' }, glNone, ' Many recent models, LLaMA among them, use a gated variant called SwiGLU.')),
           el('div', { class: 'panel gl-panel' },
-            ui.figure({ title: 'Swap the curve', badge: 'live', caption: 'The curves are exact. Bars: the 256 real inputs to the last MLP’s neurons at the prompt’s last word, binned by value (heights on a square-root scale, counts on the bars that come out positive); red bars come out zero or slightly negative. The prediction is a live forward pass with the chosen curve in place of GELU in the last MLP only. A model trained with a straight line would learn other weights; this shows that these weights rely on the bend. Drag the plot or use the arrow keys.' },
+            ui.figure({ title: 'Swap the curve', badge: 'live', caption: 'The curves are exact. Bars: the 256 real inputs to the last MLP’s neurons at the prompt’s last word, binned by value (heights on a square-root scale); red bars come out at or below zero with the chosen curve. The prediction is a live forward pass with the chosen curve in place of GELU in the last MLP only. A model trained with a straight line would learn other weights; this shows that these weights rely on the bend. Drag the plot or use the arrow keys.' },
               glCanvas, glRead, glCtl)))));
       const gel = buildGelu(ctx, { canvas: glCanvas, read: glRead, ctl: glCtl }, S);
       {
@@ -1676,6 +1726,9 @@
         const fr = run('the capital of france is', { chain: true }), id = m.tokenId('paris');
         const frOff = run('the capital of france is', { mlpOff: [new Set(MM.range(C.d_ff)), null, null] });
         const frMute = run('the capital of france is', { mute: [[0, 2]] });
+        // the same silencing at "because" in a pronoun sentence: MLP 0 is groundwork for every skill (model-notes §2)
+        const pron = run('the queen opened the door because', { mlpOff: [new Set(MM.range(C.d_ff)), null, null] });
+        const frIds = m.encode('the capital of france is').ids;
         const nAll = FACT_SETS.reduce((s, x) => s + x.items.length, 0);
         let ok = 0; FACT_SETS.forEach((fs) => fs.items.forEach((it) => { const p = run(it.text).probs; if (argmax(p) === m.tokenId(it.ans)) ok++; }));
         return {
@@ -1683,6 +1736,9 @@
           // chain: [embed, after attn 0, after MLP 0, after attn 1, …]
           frIn: fr.chain[1][id], frOut: fr.chain[2][id], frOff: frOff.probs[id],
           muteTop: m.vocab[argmax(frMute.probs)], muteP: frMute.probs[argmax(frMute.probs)],
+          pronTop: m.vocab[argmax(pron.probs)],
+          // attention of L0H2 from "is" to "france"
+          l0h2: fr.attnLast[0][2][frIds.indexOf(m.tokenId('france'))],
         };
       })();
       body.appendChild(el('section', { class: 'ch-wide mv-sec', 'aria-labelledby': 'mv-fx-h' },
@@ -1690,7 +1746,8 @@
           el('span', { class: 'mv-kicker' }, 'Where facts live'),
           el('h3', { id: 'mv-fx-h' }, 'Open the vaults'),
           el('p', { html: `Our model memorised ${n(quote.nAll)} facts: the capitals of 8 countries (both ways round), what 8 animals say and the colours of 6 things. It gets ${quote.ok === quote.nAll ? 'all ' : ''}${n(quote.ok)} right. None of them can be worked out from the sentence, so they must be stored in the weights.` }),
-          el('p', { html: `In large models, the MLPs look like the main store for facts: attention carries the subject to the last word, and MLPs there turn it into the answer <span class="mv-cite">(<a href="https://arxiv.org/abs/2202.05262" target="_blank" rel="noopener">Meng et al., 2022</a>)</span>. Our tiny model splits the work the same way. In “the capital of france is”, P(paris) jumps from ${n(pct(quote.frIn))} to ${n(pct(quote.frOut))} across the first MLP, and silencing that MLP at “is” leaves ${n(pct(quote.frOff))}. Mute ${headName(0, 2)}, the attention head that looks back at the country, and the model still names a capital, just the wrong one: ${R(quote.muteTop)} (${n(pct(quote.muteP))}).` }),
+          el('p', { html: `In large models, experiments that switch off parts of the network point to MLPs as a main store of facts. MLPs in the middle layers, working at the subject’s last word, seem to recall what the model knows about it, and attention later carries that to the end of the sentence <span class="mv-cite">(<a href="https://arxiv.org/abs/2202.05262" target="_blank" rel="noopener">Meng et al., 2022</a>)</span>. Our tiny model seems to do a simpler version: attention fetches the country to the last word, and the MLPs there turn it into the answer.` }),
+          el('p', { html: `In “the capital of france is”, ${headName(0, 2)} (L0H2) puts ${n(quote.l0h2.toFixed(2))} of its attention from “is” on “france”. Mute it, and the model still names a capital, just the wrong one: ${R(quote.muteTop)} (${n(pct(quote.muteP))}). Across the first MLP, P(paris) jumps from ${n(pct(quote.frIn))} to ${n(pct(quote.frOut))}, and silencing that MLP at “is” leaves ${n(pct(quote.frOff))}. That test is blunt, though. A model this small also uses its first MLP as groundwork for everything: silenced at “because”, it turns “the queen opened the door because …” from <em>she</em> into ${R(quote.pronTop)}. The cat in the vault above is a cleaner test: there only a few neurons of the last MLP are switched off, and nothing runs after them.` }),
           el('p', { html: 'Try the others. The ladder decodes the stream after every stage as if the model stopped there, a trick called the <span class="term">logit lens</span>. The vaults show every neuron of all three MLPs at the last word. Click neurons to silence them, or use the slider.' })),
         el('div', { class: 'panel fx-panel' },
           ui.figure({ title: 'Fact explorer', badge: 'live', caption: 'Live model. Silencing sets a neuron’s output to zero at the last word only; every other word runs normally. Muting a head zeroes its output at every position. The logit lens uses the final LayerNorm and unembedding: exact after the last MLP, a rough reading at earlier stages. Dashed outlines show the unsilenced values.' },
@@ -1711,7 +1768,7 @@
           el('h3', { id: 'mv-ct-h' }, 'Same question, two machines'),
           el('p', { html: '“The sky is …” and “the box is …” look alike, and our model answers both with a colour. The box’s colour can only come from the sentence. The sky’s comes from memory. Tell the model a colour and watch which answer follows it.' })),
         el('div', { class: 'panel ct-panel' },
-          ui.figure({ title: 'Memory vs context', badge: 'live', caption: `Live model. Threads show where ${headName(1, 3)} (layer 1, head 3), the head that finds the colour in binding questions, looks from the final “is”; numbers are its attention weights. Muting zeroes its output at every position.` },
+          ui.figure({ title: 'Memory vs context', badge: 'live', caption: `Live model. Threads show the attention of ${headName(1, 3)} (layer 1, head 3) from the final “is”, with its weights as numbers. In binding questions this head lands on the matching colour. Muting zeroes its output at every position.` },
             ctCtl,
             el('div', { class: 'ct-cards' },
               el('div', { class: 'ct-card' }, el('h4', {}, 'From memory'), ctMem.canvas, ctMem.ans, ctMem.note),

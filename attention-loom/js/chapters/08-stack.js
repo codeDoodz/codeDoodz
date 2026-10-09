@@ -437,7 +437,8 @@
     #ch-${ID} .st-result .bad { color: var(--madder); font-weight: 600; }
     #ch-${ID} .st-result .good { color: var(--weld); font-weight: 600; }
     #ch-${ID} .st-math { font-size: 0.78em; }
-    #ch-${ID} .st-small { font-size: var(--fs-small); line-height: 1.5; color: var(--mist) !important; }
+    @media (max-width: 480px) { #ch-${ID} .st-math { font-size: 0.7em; white-space: nowrap; padding-left: 8px; padding-right: 8px; } }
+    #ch-${ID} .st-small { display: block; font-size: var(--fs-small); line-height: 1.5; color: var(--mist) !important; }
 
     #ch-${ID} .st-sec { display: grid; gap: var(--space-5); }
     #ch-${ID} .st-kicker { font-family: var(--font-mono); font-size: var(--fs-micro); letter-spacing: 0.16em; text-transform: uppercase; color: var(--weld); }
@@ -487,9 +488,17 @@
     #ch-${ID} .st-next .ok { color: var(--verdigris); font-family: var(--font-mono); font-size: 10px; }
     #ch-${ID} .st-next .no { color: var(--mist); font-family: var(--font-mono); font-size: 10px; }
     #ch-${ID} .st-detail { position: sticky; top: 12px; display: grid; gap: 10px; padding: var(--space-4); border-radius: var(--radius-sm); background: var(--ink); border: 1px solid var(--rule); }
-    @media (max-width: 900px) { #ch-${ID} .st-detail { position: static; } }
+    @media (max-width: 900px) {
+      /* phones: the detail rides along at the top while the table scrolls under it */
+      #ch-${ID} .st-detail { top: 6px; z-index: 3; gap: 6px; padding: 10px 12px; box-shadow: 0 10px 24px -12px rgba(0, 0, 0, 0.8); }
+      #ch-${ID} .st-detail .st-dw { font-size: 21px; }
+      #ch-${ID} .st-detail .st-drow:nth-child(n+4), #ch-${ID} .st-detail .st-dtrace, #ch-${ID} .st-detail .st-dh-trace { display: none; }
+    }
+    #ch-${ID} .st-grid-wrap.is-scroll { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); }
+    #ch-${ID} .st-grid-wrap.is-scroll.at-end { -webkit-mask-image: none; mask-image: none; }
+    #ch-${ID} .st-dw small { font-family: var(--font-mono); font-style: normal; font-size: 11px; letter-spacing: 0.06em; color: var(--mist); margin-left: 8px; }
     #ch-${ID} .st-dh { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--mist); line-height: 1.5; }
-    #ch-${ID} .st-dh b { color: var(--weld); font-weight: 500; }
+    #ch-${ID} .st-dh b { color: var(--weld); font-weight: 500; text-transform: none; letter-spacing: 0.04em; }
     #ch-${ID} .st-dw { font-family: var(--font-display); font-style: italic; font-size: 26px; line-height: 1; color: var(--linen); }
     #ch-${ID} .st-drows { display: grid; gap: 5px; }
     #ch-${ID} .st-drow { display: grid; grid-template-columns: minmax(0, 6.5em) minmax(0, 1fr) 3.6em; gap: 8px; align-items: center; font-size: 12.5px; }
@@ -505,7 +514,7 @@
 
     /* --- depth profiles --- */
     #ch-${ID} .st-dp { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: clamp(24px, 4vw, 56px); align-items: start; }
-    @media (max-width: 900px) { #ch-${ID} .st-dp { grid-template-columns: minmax(0, 1fr); } }
+    @media (max-width: 900px) { #ch-${ID} .st-dp { grid-template-columns: minmax(0, 1fr); } #ch-${ID} .st-dp > .prose { order: -1; } }
     #ch-${ID} .st-types { display: flex; flex-wrap: wrap; gap: 6px; }
     #ch-${ID} .st-type {
       display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--rule-strong); background: var(--ink);
@@ -896,8 +905,13 @@
           g.strokeRect(cx - tw / 2 - 2.5, top - 2.5, tw + 5, bot - top + 5);
         }
         D.text(g, String(it.n), cx, S.h - Gm.botPad + (Gm.phone ? 20 : 22), { size: Gm.phone ? 16 : 22, role: 'display', italic: true, weight: 400, color: it.own ? AM.dye.weld : AM.col.linen, align: 'center' });
-        D.text(g, it.a.toUpperCase(), cx, Gm.ys[3] - (Gm.phone ? 12 : 16), { size: Gm.phone ? 7.5 : 8.5, role: 'mono', color: it.own ? AM.dye.weld : AM.col.linenDim, align: 'center', letterSpacing: '0.04em', maxWidth: cw - 2 });
-        D.text(g, it.b.toUpperCase(), cx, Gm.ys[3] - (Gm.phone ? 3 : 5), { size: Gm.phone ? 7 : 8, role: 'mono', color: AM.col.mist, align: 'center', letterSpacing: '0.04em', maxWidth: cw - 2 });
+        if (Gm.phone) {
+          // one short label per tower: two lines of mono do not fit 28 px columns
+          D.text(g, it.own ? 'HERE' : it.a.toUpperCase(), cx, Gm.ys[3] - 5, { size: 7, role: 'mono', color: it.own ? AM.dye.weld : AM.col.linenDim, align: 'center', maxWidth: cw - 3 });
+        } else {
+          D.text(g, it.a.toUpperCase(), cx, Gm.ys[3] - 16, { size: 8.5, role: 'mono', color: it.own ? AM.dye.weld : AM.col.linenDim, align: 'center', letterSpacing: '0.04em', maxWidth: cw - 2 });
+          D.text(g, it.b.toUpperCase(), cx, Gm.ys[3] - 5, { size: 8, role: 'mono', color: AM.col.mist, align: 'center', letterSpacing: '0.04em', maxWidth: cw - 2 });
+        }
       });
       g.restore();
     }
@@ -1171,6 +1185,9 @@
       const label = `A tower of three transformer layers reading “${s.tokens.join(' ')}”. Each word is a vertical thread; each layer band shows its attention threads and MLP edits. Focused word “${s.tokens[t]}”: the logit lens reads ${tr}.${S.muted ? ' Head L0H0 is silenced at this word.' : ''}`;
       canvas.setAttribute('aria-label', label);
     }
+    /** Redraw at once after a change: the first frame is complete before the loop ticks,
+        and under reduced motion (loop at ~2 fps) clicks still answer immediately. */
+    const kick = () => { if (S.geo) draw(); };
     const api = {
       setSlot(slot, opts = {}) {
         const changed = slot !== S.slot;
@@ -1179,6 +1196,7 @@
         show(S.muted && slot.mutedSent ? slot.mutedSent : slot.sent);
         if (changed && S.tg.beads > 0.5 && opts.sweep !== false) startSweep();
         describe();
+        kick();
       },
       setMode(mode) {
         const m = MODES[mode] || MODES.stack;
@@ -1188,12 +1206,14 @@
         if (m.beads > 0.5 && !wasBeads) startSweep();
         if (mode === 'compose' && S.slot) S.focus = S.slot.focus;
         if (AM.reducedMotion) Object.assign(S.v, m);
+        kick();
       },
       setMuted(b) {
         if (!S.slot) return;
         S.muted = !!(b && S.slot.mutedSent);
         show(S.muted ? S.slot.mutedSent : S.slot.sent);
         describe();
+        kick();
       },
       setFocus(t) {
         if (!S.cur) return;
@@ -1202,6 +1222,7 @@
         const s = S.cur, tt = S.focus;
         srLive.textContent = `“${s.tokens[tt]}”: ` + trace(s, tt).map((e) => `${LEVEL_NAMES[e.l]} ${e.tok} ${pct(e.p)}`).join(', ');
         if (api.onFocus) api.onFocus(S.focus);
+        kick();
       },
       get focus() { return S.focus; },
       get slot() { return S.slot; },
@@ -1212,6 +1233,9 @@
       S.w = w; S.h = h;
       S.geo = geo();
       S.bg = null;
+      // particles and blooms carry old coordinates; drop them rather than draw them in the wrong place
+      S.arcParts = [];
+      S.blooms = [];
       if (S.cur) resetFlow(S.cur);
       draw();
     });
@@ -1336,7 +1360,12 @@
     }
     const nWords = m.vocab.filter((w) => !['<pad>', '<unk>', '.', ','].includes(w)).length;
     const vocab = el('details', { class: 'st-vocab' }, el('summary', {}, `The ${nWords} words it knows`), vgrid);
-    const split = ui.toggle({ id: 'st-lt-split', label: 'Read between attention and MLP', onChange: (b) => { S.split = b; render(); } });
+    const split = ui.toggle({ id: 'st-lt-split', label: 'Read between attention and MLP', onChange: (b) => {
+      // keep the same depth selected: main column i sits at 2i in the split view
+      if (S.sel && S.sel.c >= 0) S.sel.c = b ? S.sel.c * 2 : Math.ceil(S.sel.c / 2);
+      S.split = b;
+      render();
+    } });
     if (!net) { split.input.disabled = true; split.el.title = 'Unavailable: the local forward check did not pass'; }
     const grid = el('div', { class: 'st-grid', role: 'group', 'aria-label': 'Logit lens table: rows are positions, columns are depths' });
     const gridWrap = el('div', { class: 'st-grid-wrap' }, grid);
@@ -1381,7 +1410,7 @@
         const uniq = [...new Set(unknown)];
         parts.push(`Not in the model’s vocabulary, so left out: ${uniq.map((w) => `<span class="bad">${esc(w)}</span>`).join(', ')}.`);
         const sugg = uniq.map((w) => [w, suggest(w, m.vocab)]).filter(([, s]) => s);
-        if (sugg.length) parts.push(`Try ${sugg.map(([w, s]) => `<button type="button" data-from="${esc(w)}" data-to="${esc(s)}">${esc(s)}</button>`).join(' ')}`);
+        if (sugg.length) parts.push(`Swap in: ${sugg.map(([w, s]) => `<button type="button" data-from="${esc(w)}" data-to="${esc(s)}" aria-label="replace ${esc(w)} with ${esc(s)}">${esc(w)} → ${esc(s)}</button>`).join(' ')}`);
         else parts.push('Open the word list below to see what it knows.');
       }
       if (truncated) parts.push(`Only the first ${m.config.n_ctx} tokens fit the model’s context.`);
@@ -1456,7 +1485,15 @@
       }
       const c0 = S.sel && S.sel.c >= 0 && S.sel.c < st.length ? S.sel.c : st.length - 1;
       select(S.sel ? Math.min(S.sel.t, d.T - 1) : d.T - 1, c0);
+      scrollHint();
     }
+    /** A soft fade on the right edge while more columns sit off to the side (phones, split view). */
+    function scrollHint() {
+      const over = gridWrap.scrollWidth > gridWrap.clientWidth + 2;
+      gridWrap.classList.toggle('is-scroll', over);
+      gridWrap.classList.toggle('at-end', over && gridWrap.scrollLeft + gridWrap.clientWidth >= gridWrap.scrollWidth - 2);
+    }
+    gridWrap.addEventListener('scroll', scrollHint, { passive: true });
 
     function select(t, c) {
       const d = S.data;
@@ -1469,12 +1506,12 @@
       const top = m.topk(s.get(d, t), 5), finId = d.top[d.NL][t][0].id;
       detail.innerHTML = '';
       detail.appendChild(el('div', { class: 'st-dh', html: `after ${esc(q(d.tokens[t]))} · <b>${esc(s.long)}</b>` }));
-      detail.appendChild(el('div', { class: 'st-dw' }, top[0].token));
+      detail.appendChild(el('div', { class: 'st-dw' }, top[0].token, top[0].token === '.' ? el('small', {}, 'full stop') : top[0].token === ',' ? el('small', {}, 'comma') : null));
       detail.appendChild(el('div', { class: 'st-drows' }, top.map((e) => el('div', { class: 'st-drow' },
         el('span', { class: 'w', style: { color: e.id === finId ? 'var(--weld)' : 'var(--linen)' } }, e.token),
         el('span', { class: 'bar' }, el('i', { style: { width: (e.p * 100).toFixed(1) + '%', background: e.id === finId ? 'var(--weld)' : 'var(--woad)' } })),
         el('span', { class: 'p' }, pct(e.p))))));
-      detail.appendChild(el('div', { class: 'st-dh' }, 'this position, up the stack'));
+      detail.appendChild(el('div', { class: 'st-dh st-dh-trace' }, 'this position, up the stack'));
       detail.appendChild(el('div', { class: 'st-trace st-dtrace', html: traceHTML(d, t) }));
     }
 
@@ -1483,7 +1520,7 @@
     let lastPhone = isStacked() && window.innerWidth < 560;
     window.addEventListener('resize', () => {
       const ph = isStacked() && window.innerWidth < 560;
-      if (ph !== lastPhone) { lastPhone = ph; render(); }
+      if (ph !== lastPhone) { lastPhone = ph; render(); } else scrollHint();
     });
   }
 
@@ -1545,7 +1582,8 @@
     const read = parts.readHost;
 
     function enqueue(all) {
-      S.queue = [];
+      // a redraw keeps any fact jobs still waiting (pressing "New sentences" early must not drop facts)
+      S.queue = all ? [] : S.queue.filter((job) => TYPES[job.i].fixed);
       TYPES.forEach((ty, i) => {
         if (ty.fixed) { if (all) { S.data[i] = []; ty.fixed.forEach((ex) => S.queue.push({ i, ex })); } return; }
         S.data[i] = [];
@@ -1680,8 +1718,14 @@
           g.drawImage(sprite(RGB(col)), p.x - s / 2, p.y - s / 2, s, s);
           g.globalAlpha = 1;
           if (focus === i) {
-            const above = l === 0 || mn[l] < 0.85;
-            D.text(g, f2(mn[l]), p.x + (l === 3 ? -6 : 6), p.y + (above ? -9 : 16), { size: 10, role: 'mono', color: col, align: l === 3 ? 'right' : 'left' });
+            // curves mostly rise to the right: low values get their label up and to the left
+            // (away from the climb), high ones below the flat top, with a dark halo either way
+            const low = mn[l] < 0.85, left = l === 3 || (low && l > 0);
+            g.save();
+            g.shadowColor = AM.col.ink;
+            g.shadowBlur = 5;
+            D.text(g, f2(mn[l]), p.x + (left ? -7 : 7), p.y + (low ? -9 : 16), { size: 10, role: 'mono', color: col, align: left ? 'right' : 'left' });
+            g.restore();
           }
         });
       }
@@ -1753,6 +1797,7 @@
       const heroAns = hs.top[hs.NL][hq][0];
       const lensAt = (s, l, t) => s.top[l][t][0];
       const cupIdx = hs.tokens.indexOf('cup');
+      const cfg = m.config;
 
       // ---------------------------------------------------------------- 1. tower + steps
       const towerHost = el('div');
@@ -1783,7 +1828,7 @@
         const w1 = s.attn[1][3][hq], ans = s.top[s.NL][hq][0];
         const kr = hs.tokens.indexOf(heroAns.token);
         result.innerHTML = muted
-          ? `L1H3’s weight on <em>${esc(hs.tokens[kr])}</em> falls from <b>${f2(a1[kr])}</b> to <b>${f2(w1[kr])}</b>, and the model now says <span class="bad">${esc(ans.token)}</span> (${pct(ans.p)}).`
+          ? `L1H3’s weight on <em>${esc(hs.tokens[kr])}</em> falls from <b>${f2(a1[kr])}</b> to <b>${f2(w1[kr])}</b>, and the model now says <span class="bad">${esc(ans.token)}</span> (${pct(ans.p)}). L1H3 was relying on what L0H0 wrote.`
           : `Normal run: the model says <span class="good">${esc(heroAns.token)}</span> (${pct(heroAns.p)}).`;
       };
       const setMute = (b) => {
@@ -1818,30 +1863,41 @@
         setTrace5();
       };
 
+      /** Step 4's second paragraph: the path at "cup" wanders (worded from the live readings). */
+      function cupText() {
+        const tail = 'Click any thread to read its column.';
+        if (cupIdx < 0) return tail;
+        const e0 = lensAt(hs, 0, cupIdx), e2 = lensAt(hs, 2, cupIdx), e3 = lensAt(hs, 3, cupIdx);
+        if (e2.id === e3.id) return tail;
+        const start = e0.id === e3.id ? `the bare embedding already guesses ${say(e0.token)}, ` : '';
+        return `Not every position climbs so neatly. At <em>cup</em>, ${start}the middle readings expect the list to go on (${say(e2.token)}), and only the last layer settles on ${say(e3.token)}. A lens path can wander on the way up. ${tail}`;
+      }
       const trace4 = el('div', { class: 'st-trace', html: traceHTML(hs, hq) });
       const steps = [
         step('1 · Repeat', 'One block, stacked',
           'The last four chapters built one transformer block. Attention lets positions share information, the MLP works on each position alone, and both add their results to the residual stream. A full model is that block repeated, each copy with its own weights.',
           'The tiny model on this page stacks <strong>3</strong>. GPT-2 small stacks <strong>12</strong>. GPT-3 stacks <strong>96</strong>.',
+          `Each of its blocks has ${cfg.n_head} attention heads whose queries, keys and values have ${cfg.d_model / cfg.n_head} numbers each (d<sub>head</sub> = d<sub>model</sub> / n<sub>head</sub> = ${cfg.d_model} / ${cfg.n_head}), and an MLP that widens every vector from ${cfg.d_model} to ${cfg.d_ff} numbers and back.`,
           'In the picture, each vertical thread is one word’s residual stream, rising from its embedding at the bottom to the output at the top. The dyed arcs are this model’s real attention, one colour per head. The violet knots are MLP edits, bigger where the MLP moved the stream further.'),
         step('2 · Compose', 'Later layers build on earlier ones',
           `Look at the last word, <em>is</em>. To continue, the model has to recall which colour went with <em>ball</em>.`,
-          `In layer 0, head L0H0 (${esc(headName(0, 0))}) at <em>is</em> looks back and puts <strong>${f2(a0[k0])}</strong> of its attention on <em>${esc(hs.tokens[k0])}</em>, copying information about that word into the stream at <em>is</em>. In layer 1, head L1H3 (${esc(headName(1, 3))}) uses it to find the matching colour: <strong>${f2(a1[k1])}</strong> of its attention lands on <em>${esc(hs.tokens[k1])}</em>.`,
-          'A later head reading what an earlier head wrote is called <span class="term">composition</span>. It is the reason depth helps: every layer starts from everything the layers below have worked out.',
+          `In layer 0, head L0H0 (${esc(headName(0, 0))}) at <em>is</em> puts <strong>${f2(a0[k0])}</strong> of its attention on <em>${esc(hs.tokens[k0])}</em>, so what it copies from there lands in the stream at <em>is</em>. In layer 1, head L1H3 (${esc(headName(1, 3))}) at the same word puts <strong>${f2(a1[k1])}</strong> of its attention on <em>${esc(hs.tokens[k1])}</em>, the colour that went with <em>ball</em>.`,
+          'Does the second head depend on the first? Silence L0H0 at this one word, leave everything else switched on, and watch.',
           el('div', { class: 'st-mute-row' }, muteBtn), result,
-          '<span class="st-small">Silencing L0H0 at the question word alone drops accuracy on all 1,004 held-out colour questions from 98.6% to 46.5%, close to picking one of the listed colours at random (measured offline with these same weights).</span>'),
+          '<span class="st-small">Across all 1,004 held-out colour questions, silencing L0H0 at the question word alone drops accuracy from 98.6% to 46.5%, close to picking one of the listed colours at random. Measured offline with these same weights.</span>',
+          'A later head reading what an earlier head wrote is called <span class="term">composition</span>. It is one reason depth helps: every layer starts from everything the layers below have worked out.'),
         step('3 · The logit lens', 'Reading the stream partway up',
           'At the top, the model turns the stream into a guess: a final LayerNorm, the unembedding matrix, then softmax. Nothing stops us applying the same three steps lower down.',
           '<div class="math block st-math">lens(x<sub>ℓ</sub>) = softmax(LN<sub>f</sub>(x<sub>ℓ</sub>) W<sub>U</sub> + b<sub>U</sub>)</div>',
           'Each bead is that guess for one word at one depth. <strong style="color:var(--weld)">Gold</strong> beads already match the final answer, <strong style="color:var(--woad)">blue</strong> ones guess a different word, and bigger means more probability. This trick is called the <span class="term">logit lens</span>. Chapter 6 used it on a single position; here it reads the whole tower.'),
         step('4 · Sharpen', 'A guess comes into focus',
           trace4,
-          `Follow <em>is</em> upward. The embedding alone makes a vague guess (<em>${esc(lensAt(hs, 0, hq).token)}</em>, ${pct(lensAt(hs, 0, hq).p)}), and after layer 0 the top guess is still <em>${esc(lensAt(hs, 1, hq).token)}</em> (${pct(lensAt(hs, 1, hq).p)}). Layer 1, home of the colour binder, writes <em>${esc(lensAt(hs, 2, hq).token)}</em> (${pct(lensAt(hs, 2, hq).p)}). Layer 2 only sharpens it.`,
-          cupIdx >= 0 ? `Not every position settles this way. At <em>cup</em>, the middle readings expect the list to go on (${say(lensAt(hs, 2, cupIdx).token)}), and only the last layer switches to ${say(lensAt(hs, 3, cupIdx).token)}. Click any thread to read its column.` : 'Click any thread to read its column.'),
+          `Follow <em>is</em> upward. The embedding alone makes a vague guess (<em>${esc(lensAt(hs, 0, hq).token)}</em>, ${pct(lensAt(hs, 0, hq).p)}), and after layer 0 the top guess is still <em>${esc(lensAt(hs, 1, hq).token)}</em> (${pct(lensAt(hs, 1, hq).p)}). After layer 1, home of the colour binder, the lens reads <em>${esc(lensAt(hs, 2, hq).token)}</em> (${pct(lensAt(hs, 2, hq).p)}). Layer 2 only sharpens it.`,
+          cupText()),
         step('5 · Depth', 'Each skill has its own height',
+          'Pick a sentence and the tower re-weaves it. A pronoun is settled after layer 0. Agreement starts at <em>are</em> and flips to <em>is</em> in layer 1, where a head reads the singular noun <em>key</em>. A copied name sharpens layer by layer. An animal sound stays <em>oink</em>, the model’s default, until the last layer’s MLP writes the right one.',
           el('div', { class: 'st-chips', role: 'group', 'aria-label': 'Sentences for the tower' }, chip5),
-          trace5,
-          'A pronoun is settled after layer 0. Agreement starts at <em>are</em> and flips to <em>is</em> in layer 1, where a head reads the singular noun <em>key</em>. A copied name sharpens layer by layer. An animal sound stays <em>oink</em>, the model’s default, until the last layer’s MLP writes the right one.'),
+          trace5),
       ];
       const prose = el('div', { class: 'ch-prose' }, steps);
       body.appendChild(el('div', { class: 'ch-split st-split' }, stage, prose));
@@ -1889,7 +1945,7 @@
           el('p', { html: 'One sentence could be a fluke, so here are many. For each kind of dependency the page writes fresh sentences, runs them, and asks the lens how much probability sits on the right answer at each depth.' }),
           el('p', { html: 'The threads climb at different heights. Pronouns jump in layer 0, where one head fetches the subject. Colour binding stays near zero until layer 1. Copied names and memorised facts keep climbing into the last layer.' }),
           el('p', { html: 'Agreement parks near one half after layer 0 for a neat reason: at that depth the stream says <em>are</em> for every sentence (we checked all 899 held-out agreement questions), which is right for plural subjects and wrong for singular ones. Layer 1 reads the head noun and fixes the singulars.' }),
-          el('p', { html: 'The order is no accident. A layer can only use what the layers below it have already written, so a skill that needs another skill first has to sit higher in the tower.' }))));
+          el('p', { html: 'Part of the order follows from the wiring. A layer can only use what the layers below it have already written, so a skill built on another skill has to sit higher in the tower. Colour binding is one: L1H3 in layer 1 leans on what L0H0 wrote in layer 0, as the silence button in the tower showed. Why names and facts wait for the last layer is harder to read from these curves alone.' }))));
       buildProfiles(ctx, { canvasHost: dpCanvas, typesHost: dpTypes, ctlHost: dpCtl, readHost: dpRead }, m);
 
       // ---------------------------------------------------------------- scale + caveat
@@ -1908,9 +1964,9 @@
             el('b', {}, '96'), el('div', { class: 'row' }, rib(96), el('span', {}, 'GPT-3 · d_model 12,288'))),
           el('p', { html: 'Real models stack many more layers, with much wider streams. More layers mean more rounds of reading and writing, so longer chains of composition fit inside one forward pass. The logit lens comes from a 2020 blog post about GPT-2 (by the writer nostalgebraist), which found that its middle layers often already decode to something close to the final guess, then sharpen towards the top.' })),
         el('div', { class: 'st-card' },
-          el('h4', {}, 'A lens, not a mind-reader'),
-          el('p', { html: 'Only the top of the stream is trained to be decoded. The lens assumes the lower layers already speak the same language, and they need not. Even here the lowest readings are often odd: the embedding row guesses <em>are</em> after <em>the</em>, and <em>of</em> after <em>is</em>.' }),
-          el('p', { html: 'In bigger models the early layers often decode to nonsense, and the plain lens works worse in some model families than in others. Researchers now train a small translator for each layer, the <span class="term">tuned lens</span> (Belrose et al., 2023), to read them better. Treat a lens reading as a hint about what the stream contains, not as what the model “thinks”.' }))));
+          el('h4', {}, 'Read the lens with care'),
+          el('p', { html: 'Only the top of the stream is trained to be decoded. The lens assumes the lower layers already speak the same language, and they need not. Even here the lowest readings are often odd: for the colour sentence, the embedding column of the table guesses <em>are</em> after <em>the</em> and <em>of</em> after <em>is</em>.' }),
+          el('p', { html: 'In bigger models the early layers often decode to nonsense, and the plain lens works worse in some model families than in others. Researchers now train a small translator for each layer, the <span class="term">tuned lens</span> (Belrose et al., 2023), to read them better. A lens reading is a hint about what the stream contains. Only the reading at the very top is what the model actually says.' }))));
 
       body.appendChild(el('div', { class: 'callout' },
         el('span', { class: 'callout-label' }, 'Key idea'),
