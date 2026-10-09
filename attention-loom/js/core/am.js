@@ -405,11 +405,27 @@
     update();
   }
 
+  // Contents: the whole journey at a glance, right under the hero.
+  function buildToc() {
+    const nav = document.getElementById('toc');
+    if (!nav) return;
+    const items = defs.filter((d) => d.num != null && document.querySelector(`[data-chapter="${d.id}"]`)).sort((a, b) => a.num - b.num);
+    if (!items.length) return;
+    nav.appendChild(AM.el('p', { class: 'toc-label' }, 'The journey, in the order data flows through the model'));
+    nav.appendChild(AM.el('ol', { class: 'toc-list' }, items.map((d) => AM.el('li', {},
+      AM.el('a', { href: '#ch-' + d.id },
+        AM.el('span', { class: 'toc-num', 'aria-hidden': 'true' }, String(d.num).padStart(2, '0')),
+        AM.el('span', { class: 'toc-text' },
+          AM.el('span', { class: 'toc-kicker', html: d.kicker || '' }),
+          AM.el('span', { class: 'toc-title', html: d.title || d.id })))))));
+  }
+
   AM.boot = () => {
     if (booted) return;
     booted = true;
     defs.slice().sort((a, b) => (a.num ?? -1) - (b.num ?? -1)).forEach(mountOne);
     buildRail();
+    buildToc();
     // When web fonts arrive, re-fire canvas resize callbacks so text redraws in the right face.
     AM.fontsReady.then(() => live.forEach((c) => c._resizers.forEach((r) => { const w = r.w; r.w = 0; r.resize(); if (!r.w) r.w = w; })));
   };

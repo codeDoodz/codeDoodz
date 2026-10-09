@@ -6,8 +6,9 @@
 
   /** Rounded rectangle path (does not fill/stroke). */
   D.roundRect = (g, x, y, w, h, r = 6) => {
-    r = Math.min(r, w / 2, h / 2);
     g.beginPath();
+    if (!(w > 0 && h > 0)) return; // degenerate box (e.g. mid-resize): empty path
+    r = Math.max(0, Math.min(r, w / 2, h / 2));
     g.moveTo(x + r, y);
     g.arcTo(x + w, y, x + w, y + h, r);
     g.arcTo(x + w, y + h, x, y + h, r);
